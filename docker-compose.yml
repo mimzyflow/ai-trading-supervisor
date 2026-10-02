@@ -44,6 +44,8 @@ services:
       RUNTIME_DIR: /app/runtime
       REPORTS_DIR: /app/reports
       JARVIS_REPORT_FILE: /app/jarvis-trading/latest.json
+      ACTIVE_STRATEGY: MoussaBaseline
+      STRATEGY_VALIDATION_STATE: research_only
       GITHUB_REPO: mimzyflow/ai-trading-supervisor
       GITHUB_STATUS_ISSUE: "1"
       GITHUB_STATUS_TOKEN: ${GITHUB_STATUS_TOKEN:-}

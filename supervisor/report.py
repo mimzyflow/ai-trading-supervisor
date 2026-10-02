@@ -41,6 +41,10 @@ def collect():
     data = {
         "generated_at": utcnow().isoformat(),
         "mode": "DRY-RUN",
+        "strategy": os.environ.get("ACTIVE_STRATEGY", "unknown")[:80],
+        "strategy_validation_state": os.environ.get(
+            "STRATEGY_VALIDATION_STATE", "unknown"
+        )[:40],
         "database_found": DB.exists(),
         "log_age_minutes": log_age_minutes(),
         "total_trades": 0,
@@ -129,6 +133,8 @@ def render(data):
         "",
         f"- Généré: {data['generated_at']}",
         f"- Mode: **{data['mode']}**",
+        f"- Stratégie: **{data['strategy']}**",
+        f"- Validation stratégie: **{data['strategy_validation_state']}**",
         f"- Trades ouverts: {data['open_trades']}",
         f"- Trades clôturés: {nclosed}",
         f"- P/L réalisé simulé: {data['realized_profit_eur']:.2f} EUR",
