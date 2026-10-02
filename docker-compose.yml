@@ -3,6 +3,18 @@ services:
     image: freqtradeorg/freqtrade:stable
     container_name: ai-trading-freqtrade
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      FREQTRADE__API_SERVER__ENABLED: "true"
+      FREQTRADE__API_SERVER__LISTEN_IP_ADDRESS: "0.0.0.0"
+      FREQTRADE__API_SERVER__LISTEN_PORT: "8080"
+      FREQTRADE__API_SERVER__VERBOSITY: "error"
+      FREQTRADE__API_SERVER__ENABLE_OPENAPI: "false"
+      FREQTRADE__API_SERVER__USERNAME: "${FREQTRADE_UI_USERNAME:?set in private .env}"
+      FREQTRADE__API_SERVER__PASSWORD: "${FREQTRADE_UI_PASSWORD:?set in private .env}"
+      FREQTRADE__API_SERVER__JWT_SECRET_KEY: "${FREQTRADE_UI_JWT:?set in private .env}"
+      FREQTRADE__API_SERVER__WS_TOKEN: "${FREQTRADE_UI_WS_TOKEN:?set in private .env}"
     volumes:
       - ./user_data/config.dryrun.json:/freqtrade/user_data/config.dryrun.json:ro
       - ./user_data/strategies:/freqtrade/user_data/strategies:ro
