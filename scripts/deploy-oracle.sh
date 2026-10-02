@@ -12,6 +12,7 @@ cd "$ROOT"
 tar -czf "$ARCHIVE" \
   --exclude=.git \
   --exclude=.env \
+  --exclude=.venv \
   --exclude='user_data/*.sqlite*' \
   --exclude=user_data/logs \
   --exclude=user_data/reports \
