@@ -3,6 +3,9 @@ services:
     image: freqtradeorg/freqtrade:stable
     container_name: ai-trading-freqtrade
     restart: unless-stopped
+    user: "1001:1001"
+    environment:
+      HOME: /tmp
     volumes:
       - ./user_data:/freqtrade/user_data
     command: >
@@ -16,12 +19,14 @@ services:
     image: python:3.12-slim
     container_name: ai-trading-supervisor
     restart: unless-stopped
+    user: "1001:1001"
     depends_on:
       - freqtrade
     volumes:
       - ./user_data:/app/user_data
       - ./supervisor:/app/supervisor:ro
     environment:
+      HOME: /tmp
       GITHUB_REPO: mimzyflow/ai-trading-supervisor
       GITHUB_STATUS_ISSUE: "1"
       GITHUB_STATUS_TOKEN: ${GITHUB_STATUS_TOKEN:-}

@@ -13,6 +13,8 @@ tar -czf "$ARCHIVE" \
   --exclude=.git \
   --exclude=.env \
   --exclude=.venv \
+  --exclude='*/__pycache__' \
+  --exclude='*.pyc' \
   --exclude='user_data/*.sqlite*' \
   --exclude=user_data/logs \
   --exclude=user_data/reports \
@@ -27,12 +29,6 @@ ssh -i "$KEY" "$HOST" "
   tar -xzf release.tar.gz
   rm -f release.tar.gz
   mkdir -p user_data/logs user_data/reports
-  command -v setfacl >/dev/null || {
-    echo 'setfacl (package acl) is required on Oracle.' >&2
-    exit 19
-  }
-  setfacl -m u:1000:rwx user_data user_data/logs user_data/reports
-  setfacl -m d:u:1000:rwx user_data user_data/logs user_data/reports
   command -v docker >/dev/null || {
     echo 'Docker is required on Oracle.' >&2
     exit 20
