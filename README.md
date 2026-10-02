@@ -7,7 +7,8 @@ Projet personnel de trading automatisé en **simulation d'abord**.
 - Kraken spot, paires de test BTC/EUR et ETH/EUR.
 - Capital simulé initial: 100 EUR.
 - Stratégie de base: `MoussaBaseline`.
-- Rapport technique et performance généré toutes les heures.
+- Statut Jarvis rafraîchi toutes les 5 minutes ; rapport GitHub/archivage horaire.
+- Diagnostic public Kraken des signaux récents via `scripts/check_recent_signals.py`.
 - Runtime Freqtrade isolé dans un volume Docker persistant.
 - Jarvis lit uniquement un JSON sanitizé sous `/var/lib/jarvis/runtime/trading/latest.json`.
 - Aucun secret Kraken n'est stocké dans Git.

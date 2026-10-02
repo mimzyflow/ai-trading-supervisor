@@ -51,6 +51,7 @@ def collect():
         "losses": 0,
         "last_trades": [],
         "alerts": [],
+        "activity_note": "",
     }
     if not DB.exists():
         data["alerts"].append("Base Freqtrade absente: bot pas encore initialisé.")
@@ -113,6 +114,10 @@ def collect():
         data["alerts"].append(
             f"Journal Freqtrade ancien ({age} min): vérifier le conteneur."
         )
+    if data["total_trades"] == 0 and age is not None and age <= 20:
+        data["activity_note"] = (
+            "Bot actif, en attente d'un signal d'entrée conforme à la stratégie."
+        )
     return data
 
 
@@ -136,6 +141,8 @@ def render(data):
         lines += [f"- {a}" for a in data["alerts"]]
     else:
         lines.append("- Aucune alerte technique détectée.")
+    if data.get("activity_note"):
+        lines += ["", "## Activité", f"- {data['activity_note']}"]
     lines += ["", "## Derniers trades simulés"]
     if not data["last_trades"]:
         lines.append("- Aucun trade clôturé pour le moment.")
@@ -167,7 +174,8 @@ def main():
         temp.write_text(json_payload, encoding="utf-8")
         os.chmod(temp, 0o644)
         os.replace(temp, target)
-    (REPORTS / f"{stamp}.md").write_text(markdown, encoding="utf-8")
+    if os.environ.get("REPORT_ARCHIVE", "1") == "1":
+        (REPORTS / f"{stamp}.md").write_text(markdown, encoding="utf-8")
     print(markdown)
 
 

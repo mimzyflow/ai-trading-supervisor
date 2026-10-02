@@ -47,12 +47,10 @@ services:
       GITHUB_REPO: mimzyflow/ai-trading-supervisor
       GITHUB_STATUS_ISSUE: "1"
       GITHUB_STATUS_TOKEN: ${GITHUB_STATUS_TOKEN:-}
+      REPORT_INTERVAL_SECONDS: "300"
+      PUBLISH_INTERVAL_SECONDS: "3600"
     working_dir: /app
-    command: >
-      sh -c 'mkdir -p /app/reports &&
-      while true; do python supervisor/report.py;
-      python supervisor/publish_github_issue.py || true;
-      sleep 3600; done'
+    command: python supervisor/loop.py
 
 volumes:
   freqtrade_runtime:
