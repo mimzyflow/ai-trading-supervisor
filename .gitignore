@@ -1,4 +1,5 @@
 .env
+.venv/
 user_data/config.private.json
 user_data/*.sqlite*
 user_data/logs/
