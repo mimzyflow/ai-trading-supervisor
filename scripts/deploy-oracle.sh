@@ -30,6 +30,7 @@ ssh -i "$KEY" "$HOST" "
   tar -xzf release.tar.gz
   rm -f release.tar.gz
   mkdir -p user_data/reports
+  sudo -n install -d -o jarvis -g jarvis -m 750 /var/lib/jarvis/runtime/trading
   command -v docker >/dev/null || {
     echo 'Docker is required on Oracle.' >&2
     exit 20

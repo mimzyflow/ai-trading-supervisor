@@ -5,7 +5,8 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(os.environ.get("USER_DATA_DIR", "/app/user_data"))
-REPORT = ROOT / "reports" / "latest.md"
+REPORTS = Path(os.environ.get("REPORTS_DIR", str(ROOT / "reports")))
+REPORT = REPORTS / "latest.md"
 TOKEN = os.environ.get("GITHUB_STATUS_TOKEN", "").strip()
 REPO = os.environ.get("GITHUB_REPO", "mimzyflow/ai-trading-supervisor").strip()
 ISSUE = os.environ.get("GITHUB_STATUS_ISSUE", "1").strip()

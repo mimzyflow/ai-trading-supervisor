@@ -9,6 +9,7 @@ RUNTIME = Path(os.environ.get("RUNTIME_DIR", str(ROOT)))
 DB = RUNTIME / "tradesv3.dryrun.sqlite"
 LOG = RUNTIME / "freqtrade.log"
 REPORTS = Path(os.environ.get("REPORTS_DIR", str(ROOT / "reports")))
+JARVIS_REPORT_FILE = os.environ.get("JARVIS_REPORT_FILE", "").strip()
 REPORTS.mkdir(parents=True, exist_ok=True)
 
 
@@ -157,9 +158,15 @@ def main():
     stamp = utcnow().strftime("%Y%m%d-%H%M")
     markdown = render(data)
     (REPORTS / "latest.md").write_text(markdown, encoding="utf-8")
-    (REPORTS / "latest.json").write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    json_payload = json.dumps(data, ensure_ascii=False, indent=2)
+    (REPORTS / "latest.json").write_text(json_payload, encoding="utf-8")
+    if JARVIS_REPORT_FILE:
+        target = Path(JARVIS_REPORT_FILE)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temp = target.with_name("." + target.name + ".tmp")
+        temp.write_text(json_payload, encoding="utf-8")
+        os.chmod(temp, 0o644)
+        os.replace(temp, target)
     (REPORTS / f"{stamp}.md").write_text(markdown, encoding="utf-8")
     print(markdown)
 
