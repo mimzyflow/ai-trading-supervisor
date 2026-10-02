@@ -1,0 +1,28 @@
+services:
+  freqtrade:
+    image: freqtradeorg/freqtrade:stable
+    container_name: ai-trading-freqtrade
+    restart: unless-stopped
+    volumes:
+      - ./user_data:/freqtrade/user_data
+    command: >
+      trade
+      --logfile /freqtrade/user_data/logs/freqtrade.log
+      --db-url sqlite:////freqtrade/user_data/tradesv3.dryrun.sqlite
+      --config /freqtrade/user_data/config.dryrun.json
+      --strategy MoussaBaseline
+
+  supervisor:
+    image: python:3.12-slim
+    container_name: ai-trading-supervisor
+    restart: unless-stopped
+    depends_on:
+      - freqtrade
+    volumes:
+      - ./user_data:/app/user_data
+      - ./supervisor:/app/supervisor:ro
+    working_dir: /app
+    command: >
+      sh -c 'mkdir -p user_data/reports &&
+      while true; do python supervisor/report.py;
+      sleep 3600; done'
