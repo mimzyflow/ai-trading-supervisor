@@ -40,6 +40,11 @@ ssh -i "$KEY" "$HOST" "
   }
   docker compose config >/dev/null
   docker compose pull
+  docker volume create ai-trading-freqtrade-runtime >/dev/null
+  docker run --rm --user 0:0 --entrypoint /bin/sh \
+    -v ai-trading-freqtrade-runtime:/runtime \
+    freqtradeorg/freqtrade:stable \
+    -c 'chown -R 1000:1000 /runtime && chmod 700 /runtime'
   docker compose up -d
   docker compose ps
 "

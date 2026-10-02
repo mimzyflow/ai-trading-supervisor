@@ -39,3 +39,4 @@ services:
 
 volumes:
   freqtrade_runtime:
+    name: ai-trading-freqtrade-runtime
