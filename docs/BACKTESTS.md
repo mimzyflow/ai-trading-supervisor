@@ -72,9 +72,49 @@ pullback/récupération, ADX et trailing stop.
 Conclusion : protection correcte en marché baissier T1, mais capture de tendance
 insuffisante au T2 et sur la période récente. Candidate rejetée.
 
+## Small/mid-cap momentum — recherche du 3 octobre 2026
+
+Univers construit dynamiquement à partir des paires Kraken/EUR croisées avec les
+capitalisations CoinGecko : rangs environ 60 à 180, volume Kraken 24 h >= 200 kEUR
+et spread <= 35 bps. 20 paires ont été retenues pour le premier test 4h.
+
+### MoussaSmallCapMomentum — breakout 4h
+
+| Fenêtre | Trades | Résultat 0,80 % | Profit factor | Drawdown |
+|---|---:|---:|---:|---:|
+| 12 juil. → 25 août | 6 | -1,54 % | 0,63 | 1,81 % |
+| 25 août → 2 oct. | 24 | +8,60 % | 1,65 | 3,61 % |
+| Ensemble ~83 j | 30 | +7,06 % | 1,41 | 3,66 % |
+
+Le résultat global est positif, mais la stratégie échoue sur la première fenêtre.
+Elle est donc **prometteuse mais non validée**.
+
+### Benchmark buy-and-hold de l'univers
+
+| Fenêtre | Buy-and-hold équipondéré |
+|---|---:|
+| 12 juil. → 25 août | +15,56 % |
+| 25 août → 2 oct. | +44,29 % |
+| Ensemble | +58,67 % |
+
+La stratégie réduit fortement le drawdown et l'exposition, mais sous-performe
+largement l'univers haussier. Elle doit donc démontrer une meilleure stabilité
+et une vraie valeur ajoutée ajustée du risque avant toute promotion.
+
+### MoussaSmallCapPullback — rejetée
+
+| Fenêtre | Trades | Résultat 0,80 % | Profit factor |
+|---|---:|---:|---:|
+| 12 juil. → 25 août | 8 | -6,41 % | 0,08 |
+| 25 août → 2 oct. | 42 | -16,06 % | 0,45 |
+| Ensemble | 50 | -22,47 % | 0,38 |
+
+Conclusion : le pullback classique est rejeté. La piste de recherche reste le
+momentum/breakout avec filtre de régime, liquidité et contrôle du risque.
+
 ## Interprétation
 
-Les trois essais montrent deux choses distinctes :
+Les essais montrent plusieurs choses distinctes :
 
 1. L'infrastructure fonctionne et les stratégies génèrent bien des signaux.
 2. Les règles de trading testées n'ont pas encore d'avantage robuste après frais.

@@ -6,6 +6,7 @@ user_data/logs/
 user_data/reports/
 user_data/data/
 backtests/
+user_data/backtest_results/
 __pycache__/
 .pytest_cache/
 .DS_Store
