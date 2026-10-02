@@ -17,6 +17,7 @@ tar -czf "$ARCHIVE" \
   --exclude='*.pyc' \
   --exclude='user_data/*.sqlite*' \
   --exclude=user_data/logs \
+  --exclude=user_data/runtime \
   --exclude=user_data/reports \
   .
 
@@ -28,7 +29,7 @@ ssh -i "$KEY" "$HOST" "
   cd '$REMOTE_DIR'
   tar -xzf release.tar.gz
   rm -f release.tar.gz
-  mkdir -p user_data/logs user_data/reports
+  mkdir -p user_data/reports
   command -v docker >/dev/null || {
     echo 'Docker is required on Oracle.' >&2
     exit 20
@@ -37,6 +38,7 @@ ssh -i "$KEY" "$HOST" "
     echo 'Docker Compose plugin is required on Oracle.' >&2
     exit 21
   }
+  docker compose config >/dev/null
   docker compose pull
   docker compose up -d
   docker compose ps

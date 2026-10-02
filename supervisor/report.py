@@ -5,9 +5,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(os.environ.get("USER_DATA_DIR", "/app/user_data"))
-DB = ROOT / "tradesv3.dryrun.sqlite"
-LOG = ROOT / "logs" / "freqtrade.log"
-REPORTS = ROOT / "reports"
+RUNTIME = Path(os.environ.get("RUNTIME_DIR", str(ROOT)))
+DB = RUNTIME / "tradesv3.dryrun.sqlite"
+LOG = RUNTIME / "freqtrade.log"
+REPORTS = Path(os.environ.get("REPORTS_DIR", str(ROOT / "reports")))
 REPORTS.mkdir(parents=True, exist_ok=True)
 
 
