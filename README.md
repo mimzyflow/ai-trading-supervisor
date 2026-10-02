@@ -8,6 +8,8 @@ Projet personnel de trading automatisé en **simulation d'abord**.
 - Capital simulé initial: 100 EUR.
 - Stratégie de base: `MoussaBaseline`.
 - Rapport technique et performance généré toutes les heures.
+- Runtime Freqtrade isolé dans un volume Docker persistant.
+- Jarvis lit uniquement un JSON sanitizé sous `/var/lib/jarvis/runtime/trading/latest.json`.
 - Aucun secret Kraken n'est stocké dans Git.
 
 ## Règles de sécurité

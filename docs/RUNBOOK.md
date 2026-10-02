@@ -6,8 +6,19 @@
 - [x] Limiter la V1 au spot.
 - [x] Créer une stratégie baseline testable.
 - [x] Créer le rapport horaire local.
-- [ ] Déployer sur Oracle.
+- [x] Déployer sur Oracle en dry-run.
+- [x] Installer Docker Engine et Docker Compose sur Oracle ARM64.
+- [x] Publier le statut sanitizé vers Jarvis.
 - [ ] Vérifier le fonctionnement continu 24/7.
+
+## État Oracle au 2 octobre 2026
+- Ubuntu 24.04 ARM64.
+- Docker Server 29.1.3.
+- Docker Compose 2.40.3.
+- Freqtrade 2026.9 en mode DRY-RUN, état RUNNING.
+- Runtime persistant isolé dans le volume Docker `ai-trading-freqtrade-runtime`.
+- Rapport Jarvis sanitizé : `/var/lib/jarvis/runtime/trading/latest.json`.
+- Aucune clé Kraken réelle installée.
 
 ## Phase 2 - intervention Moussa
 - [ ] Créer/valider le compte Kraken et l'identité.
