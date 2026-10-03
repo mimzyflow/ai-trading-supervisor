@@ -10,6 +10,7 @@
   "timeframe": "15m",
   "dry_run": true,
   "dry_run_wallet": 100,
+  "fee": 0.008,
   "cancel_open_orders_on_exit": true,
   "unfilledtimeout": {
     "entry": 10,

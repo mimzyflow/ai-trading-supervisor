@@ -1,43 +1,72 @@
-# Runbook de mise en service
+# Exploitation et accès Oracle
 
-## Phase 1 - automatique
-- [x] Préparer Freqtrade en Docker.
-- [x] Configurer Kraken en dry-run.
-- [x] Limiter la V1 au spot.
-- [x] Créer une stratégie baseline testable.
-- [x] Créer le rapport horaire local.
-- [x] Déployer sur Oracle en dry-run.
-- [x] Installer Docker Engine et Docker Compose sur Oracle ARM64.
-- [x] Publier le statut sanitizé vers Jarvis.
-- [ ] Vérifier le fonctionnement continu 24/7.
+## Accès depuis le Mac
 
-## État Oracle au 2 octobre 2026
-- Ubuntu 24.04 ARM64.
-- Docker Server 29.1.3.
-- Docker Compose 2.40.3.
-- Freqtrade 2026.9 en mode DRY-RUN, état RUNNING.
-- Runtime persistant isolé dans le volume Docker `ai-trading-freqtrade-runtime`.
-- Rapport Jarvis sanitizé : `/var/lib/jarvis/runtime/trading/latest.json`.
-- Aucune clé Kraken réelle installée.
+La méthode commune à Jarvis est reprise dans `scripts/oracle-ssh-target.sh` :
+SSH Tailscale `ubuntu@100.88.175.94`, puis accès direct existant
+`ubuntu@141.253.98.135`, clé privée locale `~/.ssh/jarvis-oracle.key`.
+La clé n'est jamais copiée ni versionnée. Vérification stricte de la clé hôte,
+BatchMode, timeout et refus explicite si les deux chemins sont indisponibles.
 
-## Phase 2 - intervention Moussa
-- [ ] Créer/valider le compte Kraken et l'identité.
-- [ ] Activer la sécurité du compte et la 2FA.
-- [ ] Créer une clé API dédiée au bot.
-- [ ] Autoriser lecture + ordres uniquement.
-- [ ] Ne jamais autoriser les retraits.
-- [ ] Déposer le capital choisi, initialement envisagé autour de 100 EUR.
+```sh
+HOST=$(sh scripts/oracle-ssh-target.sh)
+ssh -i "$HOME/.ssh/jarvis-oracle.key" -o BatchMode=yes -o StrictHostKeyChecking=yes "$HOST"
+```
 
-## Phase 3 - validation avant argent réel
-- [ ] Laisser tourner le dry-run plusieurs semaines.
-- [ ] Backtester plusieurs fenêtres de marché.
-- [ ] Lancer lookahead-analysis et recursive-analysis.
-- [ ] Examiner rendement, drawdown, taux de réussite, fréquence et frais.
-- [ ] Modifier la stratégie uniquement sur la base de tests reproductibles.
-- [ ] Valider manuellement le passage en réel.
+Projet Oracle : `/home/ubuntu/ai-trading-supervisor`.
+Rapport assaini Jarvis : `/var/lib/jarvis/runtime/trading/latest.json`.
+Ce dernier est lisible par le service Jarvis ; le compte SSH utilise uniquement
+la voie administrateur déjà autorisée pour le diagnostic/déploiement.
 
-## Phase 4 - réel, uniquement après validation explicite
-- Créer `user_data/config.private.json` hors Git avec les clés Kraken.
-- Passer `dry_run` à false seulement après validation de Moussa.
-- Conserver une mise limitée et un nombre maximum de positions.
-- Garder les rapports et alertes techniques actifs.
+## Configuration
+
+- Kraken spot EUR, 100 EUR simulés, 2 positions de 20 EUR maximum.
+- Dry-run forcé dans Compose et vérifié dans l'API du moteur.
+- Aucune clé exchange dans le moteur de simulation ; la clé historique privée
+  éventuelle reste hors Git et n'est plus injectée dans Freqtrade.
+- Frais explicites nouveaux trades : 0,008 par côté. Historique ancien conservé.
+- Freqtrade et Python Docker épinglés aux digests observés sur Oracle.
+- API Freqtrade liée au localhost de l'hôte ; supervision interne par GET
+  allowlistés, authentifiés, sans redirection ni méthode d'ordre/configuration.
+- Aucun envoi d'ordre réel, levier, import n8n ou activation réelle depuis l'UI.
+
+## Contrôles
+
+`python3 scripts/check_simulation.py` refuse mode réel, périmètre différent,
+clés exchange, overrides non revus et mises hors limites. Tests de supervision
+pour API indisponible, base absente/corrompue, données invalides, mode réel,
+rapports périmés et erreurs de publication.
+
+Les healthchecks contrôlent la télémétrie moteur et le rapport local ; une
+publication GitHub non configurée est une alerte distincte et ne signifie pas
+que le moteur est arrêté. Valeur du portefeuille, P/L réalisé/latent/total,
+capital engagé et baisse maximale observée sont exposés. Le risque au stop est
+une estimation hors frais et glissement, jamais une perte maximale garantie.
+
+## Publication GitHub
+
+Sans `GITHUB_STATUS_TOKEN`, état `not_configured`, pas de faux succès.
+Si souhaitée depuis Oracle, utiliser un jeton dédié avec accès au seul dépôt,
+Issues lecture/écriture et metadata lecture, conservé dans `.env` privé.
+Ne pas recopier un jeton global de compte. Les erreurs HTTP et timeouts sont
+persistés sans texte susceptible d'exposer un secret et repris avec backoff.
+Un rapport horaire GitHub est une observation datée, pas une preuve en direct.
+
+## Déploiement / reprise
+
+1. Vérifier Git et préserver tout travail concurrent ; travailler en branche.
+2. Tests, compilation Python, `git diff --check`, validation de configuration.
+3. Commit puis fast-forward/push normal, sans force-push.
+4. `sh scripts/deploy-oracle.sh` : archive Git uniquement, hash vérifié, staging
+   testé, copie de rollback, données et secrets préservés, contrôles de santé.
+5. Vérifier `build-info.json`, les deux healthchecks, le mode dry-run effectif,
+   l'absence de clés exchange injectées et le rapport vu par Jarvis.
+
+La sauvegarde code est annoncée par le déploiement sous
+`/home/ubuntu/trading-releases/previous-<date>`. Si l'activation échoue, le code
+précédent est restauré. Le volume `ai-trading-freqtrade-runtime` est conservé.
+La production Jarvis suit son mécanisme signé existant, jamais une copie libre
+de code. Ne jamais réinitialiser la base pour embellir les résultats.
+
+Toute future expérimentation est régie par `docs/RESEARCH_PROTOCOL.md`.
+Le passage en réel nécessite une conception et une validation humaine séparées.

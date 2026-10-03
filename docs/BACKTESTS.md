@@ -12,6 +12,14 @@ Aucune stratégie n'est promue automatiquement en réel.
 
 ## Données et frais
 
+Précision du 3 octobre : toutes les valeurs `--fee` ci-dessous sont **par côté**.
+`0.008` signifie 0,80 % à l'entrée et 0,80 % à la sortie, environ 1,60 %
+aller-retour ; `0.012` implique environ 2,40 %. Les chiffres historiques ne sont
+pas modifiés. Le benchmark ancien est brut et investi à 100 %, contrairement
+au plafond de 40 % du bot. Les fenêtres déjà étudiées restent exploratoires.
+Le protocole reproductible, les limites de l'univers actuel et les contrôles
+avant promotion sont désormais décrits dans `docs/RESEARCH_PROTOCOL.md`.
+
 - Paires : BTC/EUR et ETH/EUR.
 - Données récentes : API publique Kraken.
 - Données indépendantes T1/T2 2026 : archives OHLCVT officielles Kraken.

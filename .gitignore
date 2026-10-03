@@ -7,6 +7,9 @@ user_data/reports/
 user_data/data/
 backtests/
 user_data/backtest_results/
+research_results/
+.runtime/
+build-info.json
 __pycache__/
 .pytest_cache/
 .DS_Store

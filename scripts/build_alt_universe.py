@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -81,6 +82,12 @@ for pair, market in exchange.markets.items():
 
 rows.sort(key=lambda x: (x["market_cap_rank"], -x["kraken_quote_volume_eur_24h"]))
 OUT.write_text(json.dumps(rows, ensure_ascii=False, indent=2))
+OUT.with_suffix(".meta.json").write_text(json.dumps({
+    "captured_at": datetime.now(timezone.utc).isoformat(),
+    "universe_basis": "current_snapshot_not_historical",
+    "historical_membership_verified": False,
+    "source": "CoinGecko markets + Kraken markets/tickers",
+}, indent=2))
 print(f"candidates={len(rows)}")
 for row in rows[:30]:
     print(

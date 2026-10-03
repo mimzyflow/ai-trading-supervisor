@@ -19,6 +19,7 @@ selected = [
     and row["spread_bps"] <= 35
 ]
 selected = selected[:24]
+selected_pairs = []
 
 exchange = ccxt.kraken({"enableRateLimit": True})
 print("pairs", len(selected))
@@ -33,11 +34,23 @@ for row in selected:
         columns=["timestamp", "open", "high", "low", "close", "volume"],
     )
     df["date"] = pd.to_datetime(df.pop("timestamp"), unit="ms", utc=True)
+    # Kraken includes the unfinished candle. Never backtest that row.
+    closed_before = pd.Timestamp.now(tz="UTC").floor("4h")
+    df = df[df["date"] < closed_before].copy()
     target = OUT / f"{pair.replace('/', '_')}-4h.feather"
     df[["date", "open", "high", "low", "close", "volume"]].to_feather(target)
+    selected_pairs.append(pair)
     print(
         pair,
         "rank=", row["market_cap_rank"],
         "cap_m€=", round(row["market_cap_eur"] / 1e6),
         "candles=", len(df),
     )
+
+(OUT / "manifest.json").write_text(json.dumps({
+    "captured_at": pd.Timestamp.now(tz="UTC").isoformat(),
+    "pairs": selected_pairs,
+    "timeframe": "4h",
+    "universe_basis": "current_snapshot_not_historical",
+    "historical_membership_verified": False,
+}, indent=2))

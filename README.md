@@ -1,30 +1,28 @@
 # AI Trading Supervisor
 
-Projet personnel de trading automatisé en **simulation d'abord**.
+Laboratoire personnel de trading Kraken spot EUR, en simulation uniquement.
+Portefeuille 100 EUR, deux positions de 20 EUR maximum. Aucune stratégie de ce
+dépôt n'est validée pour le réel.
 
-## Architecture
-- Freqtrade officiel, image Docker stable.
-- Kraken spot, paires de test BTC/EUR et ETH/EUR.
-- Capital simulé initial: 100 EUR.
-- Stratégie de base: `MoussaBaseline`.
-- Statut Jarvis rafraîchi toutes les 5 minutes ; rapport GitHub/archivage horaire.
-- Diagnostic public Kraken des signaux récents via `scripts/check_recent_signals.py`.
-- Runtime Freqtrade isolé dans un volume Docker persistant.
-- Jarvis lit uniquement un JSON sanitizé sous `/var/lib/jarvis/runtime/trading/latest.json`.
-- Aucun secret Kraken n'est stocké dans Git.
+Le moteur Freqtrade Oracle est figé à 2026.9 et son digest vérifié. Le superviseur
+lit seulement des endpoints GET bornés et la base SQLite en lecture seule.
+Rapport local/Jarvis toutes les 5 minutes, archives horaires, expiration après
+15 minutes. API/base invalides => données indisponibles, jamais faux zéro.
 
-## Règles de sécurité
-- `dry_run=true` tant que Moussa n'a pas validé le passage réel.
-- Aucun levier, futures ou marge dans la V1.
-- Les futures clés Kraken ne doivent jamais autoriser les retraits.
-- Les performances simulées ne garantissent pas les performances réelles.
-- Une stratégie n'est jamais promue automatiquement en réel.
+La simulation utilise des données publiques, sans clé Kraken autorisant les
+ordres. Frais nouveaux trades : 0,80 % par côté. Les secrets UI restent dans
+`.env` hors Git. La publication GitHub nécessite un jeton dédié limité aux
+issues de ce dépôt ; son absence est un état explicite `not_configured`.
 
-## Démarrage cible sur Oracle
-```bash
-docker compose pull
-docker compose up -d
-docker compose logs -f freqtrade
+```sh
+python3 -m unittest discover -s tests -v
+python3 scripts/check_simulation.py
+sh scripts/deploy-oracle.sh
 ```
 
-Voir `docs/RUNBOOK.md` pour les étapes de mise en service.
+Le déploiement exporte exclusivement le code committé, teste avant activation,
+conserve les données et prépare un rollback. L'accès SSH privé est essayé puis
+le SSH direct documenté dans Jarvis, avec vérification stricte de la clé hôte.
+
+Voir `docs/RUNBOOK.md` et `docs/RESEARCH_PROTOCOL.md` pour l'exploitation et les
+expériences. Les résultats simulés ne garantissent pas les résultats réels.

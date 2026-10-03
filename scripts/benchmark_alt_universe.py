@@ -1,5 +1,6 @@
 from pathlib import Path
 import pandas as pd
+from benchmark_metrics import passive_net_return
 
 DATA = Path("backtests/alt_recent")
 windows = [
@@ -25,6 +26,10 @@ for label,start,end in windows:
         avg=sum(rets)/len(rets)
         med=sorted(rets)[len(rets)//2]
         print(label,"pairs",len(rets),"equal_weight_pct",round(avg*100,2),"median_pct",round(med*100,2))
+        net_full = sum(passive_net_return(r, exposure=1) for r in rets) / len(rets)
+        net_capped = sum(passive_net_return(r, exposure=0.4) for r in rets) / len(rets)
+        print("cash_pct", 0.0, "net_full_exposure_pct", round(net_full*100, 2), "net_40pct_exposure_pct", round(net_capped*100, 2), "fee_per_side", 0.008)
+        print("Reference only: current universe snapshot; 40% is the allocation cap, not identical time-varying risk. Slippage and minimum sizes are not modelled.")
         details.sort(key=lambda x:x[1], reverse=True)
         print(" top",[(a,round(b*100,1)) for a,b in details[:3]])
         print(" worst",[(a,round(b*100,1)) for a,b in details[-3:]])

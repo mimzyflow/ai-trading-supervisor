@@ -1,6 +1,6 @@
 services:
   freqtrade:
-    image: freqtradeorg/freqtrade:stable
+    image: freqtradeorg/freqtrade:2026.9@sha256:9d67afb8eb5f4e1210f4fb067efcbd5e005bd4f1c27f6f3888b8b9fc7f9b5199
     container_name: ai-trading-freqtrade
     restart: unless-stopped
     ports:
@@ -11,8 +11,6 @@ services:
       FREQTRADE__API_SERVER__LISTEN_PORT: "8080"
       FREQTRADE__API_SERVER__VERBOSITY: "error"
       FREQTRADE__API_SERVER__ENABLE_OPENAPI: "false"
-      FREQTRADE__EXCHANGE__KEY: "${KRAKEN_API_KEY:?set in private .env}"
-      FREQTRADE__EXCHANGE__SECRET: "${KRAKEN_API_SECRET:?set in private .env}"
       FREQTRADE__DRY_RUN: "true"
       FREQTRADE__API_SERVER__USERNAME: "${FREQTRADE_UI_USERNAME:?set in private .env}"
       FREQTRADE__API_SERVER__PASSWORD: "${FREQTRADE_UI_PASSWORD:?set in private .env}"
@@ -21,6 +19,7 @@ services:
     volumes:
       - ./user_data/config.dryrun.json:/freqtrade/user_data/config.dryrun.json:ro
       - ./user_data/strategies:/freqtrade/user_data/strategies:ro
+      - ./supervisor/engine_healthcheck.py:/freqtrade/user_data/engine_healthcheck.py:ro
       - freqtrade_runtime:/freqtrade/runtime
     command: >
       trade
@@ -28,19 +27,30 @@ services:
       --db-url sqlite:////freqtrade/runtime/tradesv3.dryrun.sqlite
       --config /freqtrade/user_data/config.dryrun.json
       --strategy MoussaBaseline
+    healthcheck:
+      test: ["CMD", "python", "/freqtrade/user_data/engine_healthcheck.py"]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 4
 
   supervisor:
-    image: python:3.12-slim
+    image: python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016
     container_name: ai-trading-supervisor
     restart: unless-stopped
     depends_on:
-      - freqtrade
+      freqtrade:
+        condition: service_healthy
     volumes:
       - freqtrade_runtime:/app/runtime:ro
       - ./user_data/reports:/app/reports
       - /var/lib/jarvis/runtime/trading:/app/jarvis-trading
       - ./supervisor:/app/supervisor:ro
     environment:
+      FREQTRADE_API_URL: http://freqtrade:8080
+      FREQTRADE_API_USERNAME: "${FREQTRADE_UI_USERNAME:?set in private .env}"
+      FREQTRADE_API_PASSWORD: "${FREQTRADE_UI_PASSWORD:?set in private .env}"
+      SIMULATION_START_BALANCE_EUR: "100"
       RUNTIME_DIR: /app/runtime
       REPORTS_DIR: /app/reports
       JARVIS_REPORT_FILE: /app/jarvis-trading/latest.json
@@ -53,6 +63,12 @@ services:
       PUBLISH_INTERVAL_SECONDS: "3600"
     working_dir: /app
     command: python supervisor/loop.py
+    healthcheck:
+      test: ["CMD", "python", "/app/supervisor/healthcheck.py"]
+      interval: 60s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
 
 volumes:
   freqtrade_runtime:
