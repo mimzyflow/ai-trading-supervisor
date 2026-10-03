@@ -30,6 +30,19 @@ def implementation_hash():
     return hashlib.sha256(b''.join((root / name).read_bytes() for name in ['data.py', 'engine.py', 'research.py'])).hexdigest()
 
 
+def frozen_history_hash(bundle, count):
+    """Commit to the development bars and instrument metadata, not later bars."""
+    if isinstance(count, bool) or not isinstance(count, int) or count < 2:
+        raise ValueError('invalid_frozen_history_count')
+    assets = []
+    for asset in bundle['assets']:
+        if len(asset['bars']) < count:
+            raise ValueError('frozen_history_missing')
+        assets.append({**asset, 'bars': asset['bars'][:count]})
+    return canonical_hash({'schema_version': bundle['schema_version'], 'currency': bundle['currency'],
+                           'assets': sorted(assets, key=lambda asset: asset['id'])})
+
+
 def passing(result, benchmark, minimum_trades=5):
     return (result['closed_trades'] >= minimum_trades and result['return_pct'] > max(0, benchmark['return_pct']) + 0.1
             and result['max_drawdown_pct'] <= 5 and result['profit_factor'] is not None
@@ -67,6 +80,7 @@ def cycle(bundle, registry, now=None):
         plan = {'scope': scope, 'frozen_at': now.isoformat(), 'templates_sha256': canonical_hash(TEMPLATES),
                 'implementation_sha256': implementation_hash(),
                 'data_sha256': canonical_hash(bundle), 'selected': selected, 'trials': trials,
+                'frozen_history_count': count, 'frozen_history_sha256': frozen_history_hash(bundle, count),
                 'selection_benchmark': compact(benchmark), 'quality_verified': quality(bundle),
                 'future_holdout_sessions': 126, 'real_money_eligible': False}
         registry.db.execute('INSERT INTO epochs VALUES(?,?,?,?)', (epoch_id, json.dumps(plan), 'frozen', '{}'))
@@ -77,6 +91,14 @@ def cycle(bundle, registry, now=None):
         return {'state': 'implementation_changed_new_plan_required', 'epoch': epoch_id, 'real_money_eligible': False}
     if not plan['selected']:
         return {'state': 'no_candidate_passed_development', 'epoch': epoch_id, 'trials': plan['trials'], 'real_money_eligible': False}
+    if not plan.get('frozen_history_sha256') or 'frozen_history_count' not in plan:
+        return {'state': 'frozen_history_verification_required', 'epoch': epoch_id, 'real_money_eligible': False}
+    try:
+        unchanged = frozen_history_hash(bundle, plan['frozen_history_count']) == plan['frozen_history_sha256']
+    except ValueError:
+        unchanged = False
+    if not unchanged:
+        return {'state': 'frozen_history_changed_new_plan_required', 'epoch': epoch_id, 'real_money_eligible': False}
     frozen = stamp(plan['frozen_at'])
     bars = bundle['assets'][0]['bars']
     indices = [i for i, b in enumerate(bars) if stamp(b['open_at']) > frozen]

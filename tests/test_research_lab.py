@@ -191,6 +191,70 @@ class StopGuardTests(unittest.TestCase):
 
 
 class ResearchProtocolTests(unittest.TestCase):
+    def test_changed_frozen_bars_or_instrument_metadata_never_consume_holdout(self):
+        for change in ['price', 'volume', 'split', 'lot', 'missing_history']:
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as folder:
+                reg=Registry(Path(folder)/'r.sqlite')
+                start=datetime(2018,1,1,tzinfo=timezone.utc)
+                good={'return_pct':3,'profit':3,'profit_factor':1.5,'max_drawdown_pct':1,
+                      'closed_trades':20,'halted':False,'trades':[],'curve':[]}
+                def fake(data,spec,**kw):return {**good,'return_pct':0 if spec['family']=='buy_hold' else 3}
+                with patch('research_lab.research.simulate',side_effect=fake):
+                    cycle(bundle(count=600,start=start),reg,datetime(2019,9,1,tzinfo=timezone.utc))
+                later=bundle(count=900,start=start)
+                asset=later['assets'][0]
+                if change == 'price':asset['bars'][20].update(open=100,high=101,low=99,close=100)
+                if change == 'volume':asset['bars'][20]['volume']=9000
+                if change == 'split':asset['bars'][20]['split_ratio']=2
+                if change == 'lot':asset['lot_size']=0.001
+                if change == 'missing_history':asset['bars']=asset['bars'][:300]
+                with patch('research_lab.research.simulate') as simulate_mock:
+                    result=cycle(later,reg,datetime(2020,7,1,tzinfo=timezone.utc))
+                self.assertEqual(result['state'],'frozen_history_changed_new_plan_required')
+                self.assertFalse(result['real_money_eligible'])
+                simulate_mock.assert_not_called()
+                self.assertEqual(reg.db.execute('SELECT COUNT(*) FROM consumed').fetchone()[0],0)
+                reg.close()
+
+    def test_appended_bars_preserve_frozen_data_and_can_use_one_holdout(self):
+        with tempfile.TemporaryDirectory() as folder:
+            reg=Registry(Path(folder)/'r.sqlite')
+            start=datetime(2018,1,1,tzinfo=timezone.utc)
+            good={'return_pct':3,'profit':3,'profit_factor':1.5,'max_drawdown_pct':1,
+                  'closed_trades':20,'halted':False,'trades':[],'curve':[]}
+            def fake(data,spec,**kw):return {**good,'return_pct':0 if spec['family']=='buy_hold' else 3}
+            with patch('research_lab.research.simulate',side_effect=fake):
+                frozen=cycle(bundle(count=600,start=start),reg,datetime(2019,9,1,tzinfo=timezone.utc))
+                result=cycle(bundle(count=900,start=start),reg,datetime(2020,7,1,tzinfo=timezone.utc))
+                repeated=cycle(bundle(count=900,start=start),reg,datetime(2020,7,2,tzinfo=timezone.utc))
+            self.assertEqual(result['epoch'],frozen['epoch'])
+            self.assertEqual(result['state'],'paper_candidate_passed')
+            # A later monthly development plan must wait for its own future
+            # sessions; it cannot validate again on the consumed holdout.
+            self.assertEqual(repeated['state'],'awaiting_future_holdout')
+            self.assertEqual(reg.db.execute('SELECT COUNT(*) FROM consumed').fetchone()[0],1)
+            reg.close()
+
+    def test_old_plan_without_verifiable_frozen_prefix_cannot_use_holdout(self):
+        with tempfile.TemporaryDirectory() as folder:
+            reg=Registry(Path(folder)/'r.sqlite')
+            start=datetime(2018,1,1,tzinfo=timezone.utc)
+            good={'return_pct':3,'profit':3,'profit_factor':1.5,'max_drawdown_pct':1,
+                  'closed_trades':20,'halted':False,'trades':[],'curve':[]}
+            def fake(data,spec,**kw):return {**good,'return_pct':0 if spec['family']=='buy_hold' else 3}
+            with patch('research_lab.research.simulate',side_effect=fake):
+                frozen=cycle(bundle(count=600,start=start),reg,datetime(2019,9,1,tzinfo=timezone.utc))
+            row=reg.db.execute('SELECT plan FROM epochs WHERE id=?',(frozen['epoch'],)).fetchone()
+            plan=json.loads(row['plan'])
+            del plan['frozen_history_count'];del plan['frozen_history_sha256']
+            reg.db.execute('UPDATE epochs SET plan=? WHERE id=?',(json.dumps(plan),frozen['epoch']))
+            with patch('research_lab.research.simulate') as simulate_mock:
+                result=cycle(bundle(count=900,start=start),reg,datetime(2020,7,1,tzinfo=timezone.utc))
+            self.assertEqual(result['state'],'frozen_history_verification_required')
+            simulate_mock.assert_not_called()
+            self.assertEqual(reg.db.execute('SELECT COUNT(*) FROM consumed').fetchone()[0],0)
+            reg.close()
+
     def test_holdout_is_reserved_before_testing_and_quality_failure_rejects(self):
         with tempfile.TemporaryDirectory() as folder:
             reg=Registry(Path(folder)/'r.sqlite')
@@ -325,6 +389,77 @@ class PaperBrokerTests(unittest.TestCase):
 
 
 class CollectionAndWorkerTests(unittest.TestCase):
+    def test_corrupt_or_malformed_daily_marker_recovers_without_losing_risk_report(self):
+        for raw in ['broken json', '[]', '{}', '{"day":"invalid","result":{"state":"old"}}']:
+            with self.subTest(raw=raw), tempfile.TemporaryDirectory() as folder:
+                root=Path(folder);(root/'user_data/reports').mkdir(parents=True)
+                (root/'user_data/reports/latest.json').write_text(json.dumps(report()))
+                (root/'research_state').mkdir()
+                marker=root/'research_state/last_daily.json';marker.write_text(raw)
+                with patch('sys.stdout',new=io.StringIO()):
+                    result=once(root,stop=False,collector=lambda **kw:bundle(count=20))
+                self.assertEqual(result['risk']['state'],'research_only')
+                self.assertTrue(result['risk']['observation_verified'])
+                self.assertTrue(any(e.startswith('crypto_research_marker_') for e in result['errors']))
+                self.assertEqual(json.loads(marker.read_text())['result']['state'],'insufficient_development_history')
+                self.assertEqual(json.loads((root/'user_data/reports/autonomy.json').read_text())['risk'],result['risk'])
+
+    def test_marker_recovery_failure_is_reported_and_keeps_registry_evidence(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'user_data/reports').mkdir(parents=True)
+            (root/'user_data/reports/latest.json').write_text(json.dumps(report()))
+            (root/'research_state').mkdir()
+            reg=Registry(root/'research_state/registry.sqlite')
+            reg.consume_holdout('scope','2026-01-01','2026-02-01','reserved');reg.close()
+            (root/'research_state/last_daily.json').write_text('broken json')
+            with patch('sys.stdout',new=io.StringIO()):
+                result=once(root,stop=False,collector=lambda **kw:(_ for _ in ()).throw(OSError('private upstream text')))
+            self.assertEqual(result['crypto_research']['state'],'data_unavailable')
+            self.assertIn('crypto_research_OSError',result['errors'])
+            self.assertNotIn('private upstream text',json.dumps(result))
+            self.assertTrue((root/'user_data/reports/autonomy.json').exists())
+            reg=Registry(root/'research_state/registry.sqlite')
+            self.assertEqual(reg.db.execute('SELECT COUNT(*) FROM consumed').fetchone()[0],1);reg.close()
+
+    def test_failed_latched_stop_retries_with_current_dry_proof_when_report_is_invalid(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'user_data/reports').mkdir(parents=True)
+            report_file=root/'user_data/reports/latest.json';report_file.write_text(json.dumps(report(94)))
+            commands=[]
+            def runner(argv,**kw):
+                commands.append(argv)
+                if argv[1] == 'stop':
+                    if sum(command[1]=='stop' for command in commands) == 1:
+                        raise RuntimeError('private stop error')
+                    return SimpleNamespace(stdout='')
+                return SimpleNamespace(stdout=json.dumps([{'State':{'Running':True},'Config':{'Env':['FREQTRADE__DRY_RUN=true']}}]))
+            api=lambda **kw:SimpleNamespace(get=lambda _:dict(dry_run=True,trading_mode='spot',exchange='kraken',stake_currency='EUR'))
+            guard=lambda decision:verified_stop_simulation(decision,runner,api)
+            with patch('sys.stdout',new=io.StringIO()),patch('research_lab.worker.verified_stop_simulation',side_effect=guard):
+                first=once(root,collector=lambda **kw:bundle(count=20))
+                report_file.write_text('broken json')
+                second=once(root,collector=lambda **kw:bundle(count=20))
+            self.assertEqual(first['risk']['state'],'paused_risk')
+            self.assertTrue(first['risk']['observation_verified'])
+            self.assertEqual(first['risk']['stop_result'],'verification_or_stop_failed')
+            self.assertNotIn('private stop error',json.dumps(first))
+            self.assertFalse(second['risk']['observation_verified'])
+            self.assertEqual(second['risk']['state'],'paused_risk')
+            self.assertEqual(second['risk']['stop_result'],'simulation_container_stopped_data_preserved')
+            self.assertEqual(sum(command[1]=='inspect' for command in commands),2)
+            self.assertEqual(sum(command[1]=='stop' for command in commands),2)
+            self.assertTrue(all(command[-1]=='ai-trading-freqtrade' for command in commands))
+
+    def test_missing_observation_without_recorded_halt_never_attempts_docker_stop(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);commands=[]
+            guard=lambda decision:verified_stop_simulation(decision,runner=lambda *a,**kw:commands.append(a))
+            with patch('sys.stdout',new=io.StringIO()),patch('research_lab.worker.verified_stop_simulation',side_effect=guard):
+                result=once(root,collector=lambda **kw:bundle(count=20))
+            self.assertEqual(result['risk']['state'],'unverified')
+            self.assertEqual(result['risk']['stop_result'],'not_required')
+            self.assertEqual(commands,[])
+
     def test_collector_drops_unfinished_candle_and_refuses_closed_revisions(self):
         opened=int(datetime(2022,1,1,tzinfo=timezone.utc).timestamp())
         rows=[[opened+i*86400,'10','11','9','10','10','100',1] for i in range(4)]

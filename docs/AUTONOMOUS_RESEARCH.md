@@ -18,6 +18,9 @@ de survie : les limites sont imposées par du code séparé des stratégies.
   référence cash et référence passive à allocation comparable.
 - Les périodes de sélection font partie du développement. Une candidate
   choisie est figée avec empreintes des données, des paramètres et du code.
+  Avant tout contrôle, les bougies de développement et les caractéristiques
+  des instruments doivent conserver leur empreinte. Un historique modifié,
+  tronqué ou un ancien plan sans empreinte vérifiable refuse le contrôle.
   Son contrôle utilise ensuite 126 séances qui commencent **après** la date de
   gel. Les mois suivants ne réinitialisent pas ce délai.
 - Le contrôle est réservé dans SQLite avant l'essai, une seule fois par fenêtre
@@ -45,6 +48,9 @@ aucune position réelle, ne détruit pas le code et conserve base et preuves.
 L'arrêt est mémorisé ; une remontée ultérieure ne relance pas le bot. À zéro,
 le profil est archivé comme `retired`. Une reprise exige une revue du problème
 et un changement explicite de l'état, jamais une recharge automatique d'argent.
+Un arrêt déjà mémorisé est retenté après une erreur, même si le rapport suivant
+est invalide ; chaque tentative garde la vérification actuelle Docker/API avant
+tout arrêt. Une erreur d'observation et une erreur d'arrêt sont distinguées.
 Le seuil n'est pas une garantie de perte maximale : mouvements brusques,
 glissement et délais entre observations peuvent conduire à une perte supérieure.
 
@@ -154,6 +160,9 @@ sudo systemctl stop trading-research.timer
 phase de recherche, erreurs, profils et attente de données actions/ETF. Le rapport
 Freqtrade reprend un résumé borné. Un succès technique ne constitue pas une
 preuve de connexion broker, de rentabilité ou de publication GitHub automatique.
+Les marqueurs quotidiens corrompus sont signalés puis recalculés si les données
+restent disponibles. La base des preuves et les réservations de contrôle ne sont
+pas réinitialisées ; une erreur du marqueur n'empêche plus le rapport de risque.
 
 Sources officielles consultées le 3 octobre 2026 :
 

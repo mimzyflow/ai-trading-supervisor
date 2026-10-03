@@ -20,6 +20,24 @@ def read_json(path, maximum=8_000_000):
     return json.loads(path.read_text())
 
 
+def read_daily_marker(path, error_prefix, errors):
+    try:
+        if not path.exists():
+            return {}
+        marker = read_json(path)
+        if not isinstance(marker, dict) or not isinstance(marker.get('day'), str) or not isinstance(marker.get('result'), dict):
+            raise ValueError('invalid_daily_marker')
+        datetime.strptime(marker['day'], '%Y-%m-%d')
+        if not isinstance(marker['result'].get('state'), str):
+            raise ValueError('invalid_daily_result')
+        return marker
+    except Exception as exc:
+        # Markers are a cache; the registry remains the authority for one-use
+        # holdouts. Recovering this cache never clears evidence or reservations.
+        errors.append(error_prefix + '_marker_' + type(exc).__name__)
+        return {}
+
+
 def verified_stop_simulation(decision, runner=subprocess.run, api_factory=ReadOnlyAPI):
     """A fixed Docker stop command, only after independent current DRY-RUN proof."""
     if decision['state'] not in {'paused_risk', 'retired'}:
@@ -58,14 +76,21 @@ def once(root, stop=True, now=None, collector=fetch_crypto):
         report_file = root / 'user_data/reports/latest.json'
         try:
             decision = registry.assess(read_json(report_file), now)
-            status['risk'] = decision
-            status['risk']['stop_result'] = verified_stop_simulation(decision) if stop else 'read_only_diagnostic'
+            status['risk'] = {**decision, 'observation_verified': True}
         except Exception as exc:
             stored_state = registry.db.execute("SELECT status FROM bots WHERE id='root'").fetchone()[0]
             status['risk'] = {'state': stored_state if stored_state in {'paused_risk', 'retired'} else 'unverified',
                               'observation_verified': False, 'error_type': type(exc).__name__, 'destroy_files': False}
+        try:
+            # A recorded halt remains in force even when telemetry is down.
+            # The stop guard still verifies the current Docker/API DRY-RUN
+            # configuration independently before stopping this one container.
+            status['risk']['stop_result'] = verified_stop_simulation(status['risk']) if stop else 'read_only_diagnostic'
+        except Exception as exc:
+            status['risk'].update(stop_result='verification_or_stop_failed', stop_error_type=type(exc).__name__)
+            status['errors'].append('risk_stop_' + type(exc).__name__)
         marker_file = state / 'last_daily.json'
-        marker = read_json(marker_file) if marker_file.exists() else {}
+        marker = read_daily_marker(marker_file, 'crypto_research', status['errors'])
         if marker.get('day') != now.date().isoformat():
             data_file = state / 'crypto_daily.json'
             try:
@@ -85,7 +110,7 @@ def once(root, stop=True, now=None, collector=fetch_crypto):
                 if any(a['asset_class'] not in {'stock', 'etf'} for a in bundle['assets']):
                     raise ValueError('equities_data_scope')
                 equity_marker_file = state / 'last_equities.json'
-                equity_marker = read_json(equity_marker_file) if equity_marker_file.exists() else {}
+                equity_marker = read_daily_marker(equity_marker_file, 'equities_research', status['errors'])
                 if equity_marker.get('day') != now.date().isoformat():
                     equity_marker = {'day': now.date().isoformat(), 'result': cycle(bundle, registry, now)}
                     atomic_write(equity_marker_file, json.dumps(equity_marker, allow_nan=False))
