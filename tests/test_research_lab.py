@@ -248,14 +248,36 @@ class PaperBrokerTests(unittest.TestCase):
         with self.assertRaises(ValueError):broker.sell_limit('TOY',1,10,'moussa-paper-sell')
         self.assertFalse(any(c[0]=='POST' for c in calls))
     def broker(self, overrides=None):
-        responses={'orders:by_client_order_id':None,'clock':{'is_open':True},'account':{'cash':'100','status':'ACTIVE','trading_blocked':False},
+        responses={'orders:by_client_order_id':None,'clock':{'is_open':True},'account':{'cash':'100','status':'ACTIVE','trading_blocked':False,'account_blocked':False,'trade_suspended_by_user':False},
                    'positions':[],'orders':[],'assets/TOY':{'tradable':True,'class':'us_equity','status':'active','fractionable':False}}
         responses.update(overrides or {})
         broker=PaperBroker('private-key','private-secret',['TOY']);calls=[]
         def request(method,path,payload=None,query=None):
             calls.append((method,path,payload));return responses.get(path) if method=='GET' else {'id':'simulated-order'}
-        broker.request=request
+        broker._request=request
         return broker,calls
+
+    def test_direct_order_call_cannot_bypass_pending_exposure_or_fraction_limits(self):
+        payload={'symbol':'TOY','qty':'1','side':'buy','type':'limit','limit_price':'10',
+                 'time_in_force':'day','client_order_id':'moussa-paper-direct'}
+        broker,calls=self.broker({'orders':[{'symbol':'TOY','side':'buy','type':'limit','qty':'2','filled_qty':'0','limit_price':'10'}]})
+        with self.assertRaises(ValueError):broker.request('POST','orders',payload)
+        self.assertFalse(any(c[0]=='POST' for c in calls))
+        broker,calls=self.broker();payload['qty']='0.5'
+        with self.assertRaises(ValueError):broker.request('POST','orders',payload)
+        self.assertEqual(calls,[])
+
+    def test_direct_order_reconciles_identity_and_prevents_double_sell(self):
+        payload={'symbol':'TOY','qty':'1','side':'sell','type':'limit','limit_price':'10',
+                 'time_in_force':'day','client_order_id':'moussa-paper-direct'}
+        broker,calls=self.broker({'positions':[{'symbol':'TOY','qty':'1','market_value':'10'}],
+                                  'orders':[{'symbol':'TOY','side':'sell','qty':'1','filled_qty':'0'}]})
+        with self.assertRaises(ValueError):broker.request('POST','orders',payload)
+        self.assertFalse(any(c[0]=='POST' for c in calls))
+        existing={**payload,'id':'existing'}
+        broker,calls=self.broker({'orders:by_client_order_id':existing})
+        self.assertEqual(broker.request('POST','orders',payload)['id'],'existing')
+        self.assertEqual(len(calls),1)
 
     def test_paper_order_is_limit_long_only_with_identity(self):
         broker,calls=self.broker();broker.buy_limit('TOY',1,10,'moussa-paper-test')

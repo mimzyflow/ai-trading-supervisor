@@ -130,6 +130,13 @@ Aucun compte, abonnement de données ou dépôt n'a été ouvert par ce correcti
 
 ## Exploitation Oracle
 
+La [checklist de reprise avec Moussa](RETURN_CHECKLIST.md) distingue les choix,
+comptes et identifiants nécessaires des travaux techniques encore à réaliser.
+`scripts/check_paper_readiness.py` prépare une vérification uniquement en lecture
+de l'état initial du compte papier ; elle n'active aucun ordre. Les appels publics
+directs d'ordre passent désormais aussi par les limites complètes de positions,
+ordres en attente, quantité entière et identifiant unique du connecteur.
+
 Le déploiement installe `trading-research.service` et `trading-research.timer`.
 Le service a un seul exécuteur, quota CPU 25 %, mémoire 256 Mo, 24 tâches maximum,
 timeout 180 s et écrit uniquement état/reports ; le code est en lecture seule

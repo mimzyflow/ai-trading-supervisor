@@ -21,6 +21,19 @@ class PaperBroker:
         self.opener = opener or build_opener(NoRedirect()).open
 
     def request(self, method, path, payload=None, query=None):
+        # Public order calls always use the same complete position/pending-order
+        # checks as buy_limit/sell_limit. There is no low-level public bypass.
+        if method == 'POST' and path == 'orders':
+            fields = {'symbol', 'qty', 'side', 'type', 'limit_price', 'time_in_force', 'client_order_id'}
+            if not isinstance(payload, dict) or set(payload) != fields or query:
+                raise ValueError('paper_order_fields')
+            if payload['side'] not in {'buy', 'sell'} or payload['type'] != 'limit' or payload['time_in_force'] != 'day':
+                raise ValueError('paper_long_limit_only')
+            place = self.buy_limit if payload['side'] == 'buy' else self.sell_limit
+            return place(payload['symbol'], payload['qty'], payload['limit_price'], payload['client_order_id'])
+        return self._request(method, path, payload, query)
+
+    def _request(self, method, path, payload=None, query=None):
         if self.URL != 'https://paper-api.alpaca.markets/v2':
             raise ValueError('paper_url_is_fixed')
         if method == 'GET' and path not in self.GET_PATHS and not (path.startswith('assets/') and path[7:] in self.symbols):
@@ -71,7 +84,7 @@ class PaperBroker:
         if self.request('GET', 'clock').get('is_open') is not True:
             raise ValueError('market_closed')
         account = self.request('GET', 'account')
-        if account.get('trading_blocked') or finite(account['cash']) < quantity * limit_price or account.get('status') != 'ACTIVE':
+        if any(account.get(k) is not False for k in ['trading_blocked', 'account_blocked', 'trade_suspended_by_user']) or finite(account['cash']) < quantity * limit_price or account.get('status') != 'ACTIVE':
             raise ValueError('paper_account_not_ready')
         positions = self.request('GET', 'positions')
         pending = self.request('GET', 'orders', query={'status': 'open', 'limit': 500})
@@ -86,7 +99,7 @@ class PaperBroker:
             raise ValueError('paper_asset_not_supported')
         if quantity != int(quantity) and asset.get('fractionable') is not True:
             raise ValueError('fractional_paper_order_not_supported')
-        return self.request('POST', 'orders', {'symbol': symbol, 'qty': str(quantity), 'side': 'buy', 'type': 'limit',
+        return self._request('POST', 'orders', {'symbol': symbol, 'qty': str(quantity), 'side': 'buy', 'type': 'limit',
                                               'limit_price': str(limit_price), 'time_in_force': 'day', 'client_order_id': client_order_id})
 
     def sell_limit(self, symbol, quantity, limit_price, client_order_id):
@@ -107,5 +120,5 @@ class PaperBroker:
         reserved = sum(max(0, finite(o['qty']) - finite(o.get('filled_qty', 0))) for o in pending if o.get('symbol') == symbol and o.get('side') == 'sell')
         if not owned or finite(owned['qty']) - reserved < quantity:
             raise ValueError('paper_short_selling_forbidden')
-        return self.request('POST', 'orders', {'symbol': symbol, 'qty': str(quantity), 'side': 'sell', 'type': 'limit',
+        return self._request('POST', 'orders', {'symbol': symbol, 'qty': str(quantity), 'side': 'sell', 'type': 'limit',
                                               'limit_price': str(limit_price), 'time_in_force': 'day', 'client_order_id': client_order_id})
