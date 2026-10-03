@@ -36,6 +36,9 @@ class ResearchTests(unittest.TestCase):
         self.assertNotIn('trade', argv)
         self.assertIn('--enable-protections', argv)
         self.assertIn('FREQTRADE__DRY_RUN=true', argv)
+        self.assertNotIn('--user', argv)
+        self.assertNotIn('/project:/project:ro', argv)
+        self.assertIn('/project/user_data/config.dryrun.json:/project/config.dryrun.json:ro', argv)
         self.assertEqual(argv[argv.index('--fee') + 1], '0.008')
         self.assertTrue(any('@sha256:' in a for a in argv))
 

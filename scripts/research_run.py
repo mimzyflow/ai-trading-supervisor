@@ -23,11 +23,13 @@ def command(root, data, output, strategy, timerange, fee, pairs, timeframe):
         raise ValueError("invalid_research_parameters")
     if not strategy.isidentifier() or not pairs or any(not p.endswith("/EUR") or not p[:-4].isalnum() for p in pairs):
         raise ValueError("invalid_strategy_or_pairs")
-    return ["docker", "run", "--rm", "--user", str(os.getuid()) + ":" + str(os.getgid()),
+    return ["docker", "run", "--rm",
             "-e", "FREQTRADE__DRY_RUN=true", "-e", "FREQTRADE__EXCHANGE__KEY=", "-e", "FREQTRADE__EXCHANGE__SECRET=",
-            "-v", str(root) + ":/project:ro", "-v", str(data) + ":/data:ro", "-v", str(output) + ":/results",
-            IMAGE, "backtesting", "--config", "/project/user_data/config.dryrun.json",
-            "--strategy-path", "/project/user_data/strategies", "--strategy", strategy,
+            "-v", str(root / "user_data/config.dryrun.json") + ":/project/config.dryrun.json:ro",
+            "-v", str(root / "user_data/strategies") + ":/project/strategies:ro",
+            "-v", str(data) + ":/data:ro", "-v", str(output) + ":/results",
+            IMAGE, "backtesting", "--config", "/project/config.dryrun.json",
+            "--strategy-path", "/project/strategies", "--strategy", strategy,
             "--datadir", "/data", "--timeframe", timeframe, "--timerange", timerange,
             "--fee", str(fee), "--enable-protections", "--cache", "none", "--export", "trades",
             "--backtest-directory", "/results", "--pairs", *pairs]
@@ -72,6 +74,10 @@ def main():
             raise ValueError("historical_membership_requires_separate_review")
     output = root / "research_results" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S-%f")
     output.mkdir(parents=True)
+    # The pinned image runs as ftuser (UID/GID 1000). Keep its package environment.
+    # Root invocations on Oracle give only this new result directory to ftuser.
+    if os.geteuid() == 0:
+        os.chown(output, 1000, 1000)
     info = manifest(root, data, args.strategy, args.pairs, args.timeframe, args.timerange, args.fee, membership)
     argv = command(root, data, output, args.strategy, args.timerange, args.fee, args.pairs, args.timeframe)
     info["command"] = argv
@@ -81,8 +87,8 @@ def main():
         return 0
     # Never inherit exchange/API overrides into a research invocation.
     env = {k: v for k, v in os.environ.items() if not k.startswith("FREQTRADE__")}
-    preflight = ["docker", "run", "--rm", "--entrypoint", "python", "-v", str(root) + ":/project:ro", "-v", str(data) + ":/data:ro", IMAGE,
-                 "/project/scripts/check_market_data.py", "--data", "/data", "--timeframe", args.timeframe, "--pairs", *args.pairs]
+    preflight = ["docker", "run", "--rm", "--entrypoint", "python", "-v", str(root / "scripts/check_market_data.py") + ":/check_market_data.py:ro", "-v", str(data) + ":/data:ro", IMAGE,
+                 "/check_market_data.py", "--data", "/data", "--timeframe", args.timeframe, "--pairs", *args.pairs]
     validation = subprocess.run(preflight, env=env, capture_output=True, text=True, timeout=120)
     if validation.returncode != 0:
         info["exit_code"] = validation.returncode
