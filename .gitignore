@@ -8,6 +8,7 @@ user_data/data/
 backtests/
 user_data/backtest_results/
 research_results/
+research_state/
 .runtime/
 build-info.json
 __pycache__/

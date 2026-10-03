@@ -47,6 +47,31 @@ class SupervisionTests(unittest.TestCase):
             conn.execute("INSERT INTO trades VALUES (1,'BTC/EUR',0,0.05,1.0,'2026-10-03','roi')")
             conn.execute("INSERT INTO trades VALUES (2,'ETH/EUR',1,NULL,NULL,NULL,NULL)")
 
+    def test_malformed_research_status_cannot_break_engine_report(self):
+        for value in [[], {'generated_at': 1}, {'generated_at': '2026-10-03T00:00:00'},
+                      {'generated_at': datetime.now(timezone.utc).isoformat(), 'risk': []}]:
+            with self.subTest(value=value):
+                (self.root / 'autonomy.json').write_text(json.dumps(value))
+                result = report.collect(FakeAPI())
+                self.assertTrue(result['api_ok'])
+                self.assertEqual(result['research']['state'], 'unavailable')
+
+    def test_research_summary_expires_and_never_exposes_extra_fields(self):
+        value = {'schema_version': 1, 'generated_at': datetime.now(timezone.utc).isoformat(),
+                 'risk': {'state': 'research_only', 'secret': 'test-secret'},
+                 'crypto_research': {'state': 'no_candidate_passed_development'},
+                 'broker_orders_activated': True, 'real_money_eligible': True, 'max_bots': 999}
+        (self.root / 'autonomy.json').write_text(json.dumps(value))
+        result = report.read_research()
+        self.assertEqual(result['state'], 'current')
+        self.assertFalse(result['broker_orders_activated'])
+        self.assertFalse(result['real_money_eligible'])
+        self.assertEqual(result['max_bots'], 3)
+        self.assertNotIn('test-secret', json.dumps(result))
+        value['generated_at'] = (datetime.now(timezone.utc) - timedelta(seconds=901)).isoformat()
+        (self.root / 'autonomy.json').write_text(json.dumps(value))
+        self.assertEqual(report.read_research()['state'], 'stale')
+
     def test_reports_latent_loss_and_full_wallet_denominator(self):
         result = report.collect(FakeAPI())
         self.assertEqual(result["mode"], "DRY-RUN")

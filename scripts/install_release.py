@@ -22,6 +22,18 @@ def restore_files(root, backup, files, existed):
             destination.unlink()
 
 
+def install_research_units(root):
+    (root / 'research_state').mkdir(mode=0o700, exist_ok=True)
+    for name in ['trading-research.service', 'trading-research.timer']:
+        shutil.copy2(root / 'deploy' / name, Path('/etc/systemd/system') / name)
+    run(['systemd-analyze', 'verify', '/etc/systemd/system/trading-research.service', '/etc/systemd/system/trading-research.timer'], capture_output=True)
+    run(['systemctl', 'daemon-reload'])
+    run(['systemctl', 'enable', '--now', 'trading-research.timer'], capture_output=True)
+    # First cycle performs actual public-data research and writes its status.
+    run(['systemctl', 'start', 'trading-research.service'], timeout=190)
+    run(['systemctl', 'is-active', '--quiet', 'trading-research.timer'])
+
+
 def install(params):
     root = Path('/home/ubuntu/ai-trading-supervisor')
     archive = Path(params['archive'])
@@ -51,6 +63,9 @@ def install(params):
             shutil.copy2(source, destination)
             existed.append(relative)
     compose = ['docker', 'compose', '--project-directory', str(root), '-f', str(root / 'docker-compose.yml')]
+    unit_paths = [Path('/etc/systemd/system') / name for name in ['trading-research.service', 'trading-research.timer']]
+    saved_units = {p: p.read_bytes() if p.exists() else None for p in unit_paths}
+    timer_previously_enabled = subprocess.run(['systemctl', 'is-enabled', '--quiet', 'trading-research.timer'], capture_output=True).returncode == 0
     try:
         for relative in files:
             destination = root / relative
@@ -68,10 +83,22 @@ def install(params):
                 env = dict(item.split('=', 1) for item in container['Config']['Env'])
                 if env.get('FREQTRADE__DRY_RUN') != 'true' or env.get('FREQTRADE__EXCHANGE__KEY') or env.get('FREQTRADE__EXCHANGE__SECRET'):
                     raise RuntimeError('simulation_environment_violation')
+        install_research_units(root)
         print(json.dumps({'deployment': 'ok', 'commit': params['commit'], 'rollback': str(backup), 'mode': 'DRY-RUN'}))
         archive.unlink()
     except Exception:
+        subprocess.run(['systemctl', 'stop', 'trading-research.timer', 'trading-research.service'], capture_output=True)
         restore_files(root, backup, files + [Path('build-info.json')], existed)
+        for path, previous in saved_units.items():
+            if previous is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(previous)
+        subprocess.run(['systemctl', 'daemon-reload'], capture_output=True)
+        if timer_previously_enabled:
+            subprocess.run(['systemctl', 'enable', '--now', 'trading-research.timer'], capture_output=True)
+        else:
+            subprocess.run(['systemctl', 'disable', 'trading-research.timer'], capture_output=True)
         run(compose + ['up', '-d'])
         print(json.dumps({'deployment': 'rolled_back', 'backup': str(backup)}))
         raise

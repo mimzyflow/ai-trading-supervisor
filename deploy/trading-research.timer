@@ -1,0 +1,11 @@
+[Unit]
+Description=Simulation risk checks every five minutes, research once daily
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+AccuracySec=30s
+Unit=trading-research.service
+
+[Install]
+WantedBy=timers.target

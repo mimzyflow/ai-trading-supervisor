@@ -26,3 +26,26 @@ le SSH direct documenté dans Jarvis, avec vérification stricte de la clé hôt
 
 Voir `docs/RUNBOOK.md` et `docs/RESEARCH_PROTOCOL.md` pour l'exploitation et les
 expériences. Les résultats simulés ne garantissent pas les résultats réels.
+
+## Recherche automatique, actions et ETF
+
+`research_lab` est un moteur séparé de Freqtrade, uniquement recherche/simulation.
+Il explore quatre variantes figées, réserve un contrôle futur de 126 séances
+et conserve les décisions dans SQLite. Il ne réécrit pas son code ni ses limites.
+Un garde surveille la simulation existante toutes les cinq minutes et peut arrêter
+uniquement le conteneur confirmé DRY-RUN à 5 % de baisse du portefeuille.
+
+Le simulateur actions/ETF modélise ouverture suivante, coûts, quantités entières,
+splits et dividendes non encaissés. Un adaptateur Alpaca **papier uniquement** est
+préparé, avec hôte fixe, horaires, ordres limités, plafonds et identifiants de reprise.
+Il n'est pas connecté ni activé faute de compte, clés et univers de données validé.
+
+```sh
+python3 scripts/simulate_equities.py --data /chemin/equities.bundle.json
+python3 -m research_lab.worker --diagnostic-only
+```
+
+La fabrique est limitée à trois profils de recherche et deux générations.
+Un ×10 de gains réalisés ne suffit pas : validation et observations prospectives
+contrôlées sont requises. Aucun argent ni clé courtier n'est transmis à un enfant.
+Voir `docs/AUTONOMOUS_RESEARCH.md` pour les critères, limites et branchement papier.

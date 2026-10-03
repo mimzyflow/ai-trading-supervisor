@@ -35,7 +35,7 @@ def main():
         # Values are serialized into Python, never interpolated into shell code.
         payload = {"commit": commit, "sha256": sha, "archive": incoming}
         remote = "PARAMS = " + repr(payload) + "\n" + (ROOT / "scripts/install_release.py").read_text()
-        call(ssh + ["sudo -n python3 -"], input=remote, text=True, timeout=240)
+        call(ssh + ["sudo -n python3 -"], input=remote, text=True, timeout=420)
 
 
 if __name__ == "__main__":

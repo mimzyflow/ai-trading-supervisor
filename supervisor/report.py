@@ -57,6 +57,31 @@ def read_publication():
         return {"state": "not_configured" if not os.environ.get("GITHUB_STATUS_TOKEN", "").strip() else "pending"}
 
 
+def read_research():
+    path = REPORTS / 'autonomy.json'
+    try:
+        if path.stat().st_size > 65536:
+            return {'state': 'invalid'}
+        raw = json.loads(path.read_text())
+        if not isinstance(raw, dict) or not isinstance(raw.get('generated_at'), str):
+            raise ValueError('invalid_research_status')
+        if any(not isinstance(raw.get(key, {}), dict) for key in ['risk', 'crypto_research', 'equities']):
+            raise ValueError('invalid_research_sections')
+        observed = datetime.fromisoformat(raw['generated_at'].replace('Z', '+00:00'))
+        if observed.tzinfo is None:
+            raise ValueError('research_time_without_timezone')
+        age = (utcnow() - observed).total_seconds()
+        if raw.get('schema_version') != 1 or not 0 <= age <= 900:
+            return {'state': 'stale'}
+        return {'state': 'current', 'observed_at': raw['generated_at'],
+                'risk': str(raw.get('risk', {}).get('state', 'unknown'))[:48],
+                'crypto': str(raw.get('crypto_research', {}).get('state', 'unknown'))[:64],
+                'equities': str(raw.get('equities', {}).get('state', 'unknown'))[:64],
+                'broker_orders_activated': False, 'max_bots': 3, 'real_money_eligible': False}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {'state': 'unavailable', 'broker_orders_activated': False}
+
+
 def collect(api=None):
     now = utcnow()
     initial = number(os.environ.get("SIMULATION_START_BALANCE_EUR", "100"))
@@ -72,6 +97,7 @@ def collect(api=None):
         "committed_capital_eur": None, "estimated_stop_risk_eur": None,
         "observed_max_drawdown_pct": None, "wins": None, "losses": None,
         "last_trades": [], "alerts": [], "activity_note": "", "publication": read_publication(),
+        "research": read_research(),
     }
     if not data["database_found"]:
         data["alerts"].append("Base Freqtrade absente : statistiques indisponibles.")
@@ -165,6 +191,11 @@ def render(data):
         lines.append("- " + str(trade.get("pair", "?")) + " : " + display(trade.get("close_profit_pct")) + "% | " + str(trade.get("exit_reason", "?")))
     if not data.get("last_trades"):
         lines.append("- Aucun trade clôturé disponible.")
+    research = data.get('research', {})
+    lines += ['', '## Recherche autonome et actions/ETF', '- Télémétrie : ' + str(research.get('state', 'unknown')),
+              '- Recherche crypto : ' + str(research.get('crypto', 'indisponible')),
+              '- Actions/ETF : ' + str(research.get('equities', 'indisponible')),
+              '- Ordres courtier activés : non. Réel éligible : non.']
     lines += ["", "> Supervision en lecture seule. Les résultats simulés ne constituent pas une validation de rentabilité."]
     return "\n".join(lines) + "\n"
 
