@@ -66,6 +66,18 @@ faire l'objet d'une nouvelle revue avant reprise, conformément au contrôle
 existant `implementation_changed_new_plan_required`. Les preuves et fenêtres
 consommées restent conservées. Préparer cette reprise avant un déploiement.
 
+### État opérationnel relu le 4 octobre 2026
+
+La lecture Oracle à 00:36 UTC confirme encore le code `557510a`, un profil et
+un plan octobre figé, sans candidate sélectionnée ni fenêtre consommée. L'empreinte
+de ce plan (`60bbc99…`) diffère de celle du code corrigé (`9c159f8…`). Un déploiement
+conserverait le registre et les preuves, mais le calcul quotidien renverrait
+`implementation_changed_new_plan_required`. Il ne reprendrait donc pas les
+recherches de ce plan automatiquement. Sans candidate sélectionnée, un nouveau
+plan mensuel peut être créé en novembre ; une reprise anticipée doit passer par
+un mécanisme explicite de nouveau plan conservant l'ancien pour audit. Aucune
+réinitialisation ni activation opérationnelle n'a été effectuée.
+
 Restent les prérequis de `RETURN_CHECKLIST.md` : choix des instruments et du
 compte papier, identifiants privés, données vérifiées, exécuteur prospectif,
 recette papier et observation future. Le réel reste désactivé.
