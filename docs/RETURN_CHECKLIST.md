@@ -50,6 +50,13 @@ pas toutes d'être physiquement devant le Mac. Aucune demande de clé par messag
 
 ## Travaux techniques que Codex peut reprendre ensuite
 
+Le laboratoire sans compte est désormais exécuté : collecte publique SOFI/U,
+1 342 séances par titre et 72 simulations historiques. Les quatre variantes
+restent écartées sous les coûts conservateurs ; le scénario sans commission
+reste exploratoire et trop peu fourni. Voir `EQUITY_SIMULATIONS.md` et
+`EQUITY_SIMULATION_RESULTS_2026-10-04.md`. Aucun compte supplémentaire demandé
+pour ce lot. Ces calculs ne sont ni une recette Alpaca ni les 126 séances futures.
+
 - Si Alpaca est explicitement retenu, lancer `scripts/check_paper_readiness.py` :
   uniquement GET, hôte papier fixé,
   compte actif/non bloqué, monnaie USD, cash et equity égaux aux 100 USD initiaux,

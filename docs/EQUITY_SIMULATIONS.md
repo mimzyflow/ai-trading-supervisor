@@ -106,5 +106,11 @@ expérimental selon les observations. `real_money_eligible=false` est permanent.
 
 ## Résultats
 
-À remplir après l'essai effectif. Aucun chiffre de performance n'était connu
-lors de la fixation du protocole ci-dessus.
+Le premier essai effectif est terminé : 1 342 séances par titre, 72 calculs,
+quatre variantes écartées dans les scénarios conservateur et stress. La source
+unique et les transactions trop rares empêchent une validation financière,
+même lorsque le scénario sans commission est positif. Aucun compte à créer
+sur la base de ces seuls résultats. Voir le [rapport complet du 4 octobre](EQUITY_SIMULATION_RESULTS_2026-10-04.md).
+
+Cette section est ajoutée après calcul. Le protocole ci-dessus était déjà
+versionné au commit `5c9d69d` avant toute performance calculée.

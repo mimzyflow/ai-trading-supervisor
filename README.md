@@ -49,3 +49,25 @@ La fabrique est limitée à trois profils de recherche et deux générations.
 Un ×10 de gains réalisés ne suffit pas : validation et observations prospectives
 contrôlées sont requises. Aucun argent ni clé courtier n'est transmis à un enfant.
 Voir `docs/AUTONOMOUS_RESEARCH.md` pour les critères, limites et branchement papier.
+
+## Simulations actions sans compte
+
+Le laboratoire local collecte un univers exploratoire fixe SOFI/U en données
+publiques et publie 72 calculs rétrospectifs, quatre variantes, cash/passif et
+trois scénarios de coûts. Il conserve les réponses originales, préinscrit le
+plan avant calcul et refuse tout écrasement. Aucun compte ni ordre courtier.
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-equity-research.txt
+.venv/bin/python scripts/download_equity_diagnostics.py --name equity-diagnostics-NOUVEL-ESSAI
+.venv/bin/python scripts/run_equity_experiment.py --data research_results/equity-diagnostics-NOUVEL-ESSAI/equities.bundle.json --output research_results/equity-experiment-NOUVEL-ESSAI
+```
+
+Python 3.10 minimum pour le calendrier optionnel. Un nouveau dossier conserve
+une nouvelle archive ; il ne transforme pas une période déjà vue en validation
+indépendante. Les résultats bruts et détaillés restent hors Git.
+
+Premier essai du 4 octobre : **aucune variante retenue**, source unique et
+transactions trop rares. Voir [le protocole](docs/EQUITY_SIMULATIONS.md) et
+[les 72 résultats](docs/EQUITY_SIMULATION_RESULTS_2026-10-04.md).
