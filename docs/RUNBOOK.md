@@ -59,6 +59,9 @@ Un rapport horaire GitHub est une observation datée, pas une preuve en direct.
 3. Commit puis fast-forward/push normal, sans force-push.
 4. `sh scripts/deploy-oracle.sh` : archive Git uniquement, hash vérifié, staging
    testé, copie de rollback, données et secrets préservés, contrôles de santé.
+   Le Compose résolu est vérifié en capture privée avant toute copie active et
+   avant chaque activation/restauration : DRY-RUN obligatoire, clés exchange
+   absentes ou vides. Un refus initial laisse la version active intacte.
 5. Vérifier `build-info.json`, les deux healthchecks, le mode dry-run effectif,
    l'absence de clés exchange injectées et le rapport vu par Jarvis.
 
@@ -69,4 +72,7 @@ La production Jarvis suit son mécanisme signé existant, jamais une copie libre
 de code. Ne jamais réinitialiser la base pour embellir les résultats.
 
 Toute future expérimentation est régie par `docs/RESEARCH_PROTOCOL.md`.
+La reprise explicite après changement de code est décrite dans
+[`RESEARCH_RESUME.md`](RESEARCH_RESUME.md). Elle conserve les preuves et réserve
+126 séances strictement postérieures au nouveau gel.
 Le passage en réel nécessite une conception et une validation humaine séparées.

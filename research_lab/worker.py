@@ -38,6 +38,16 @@ def read_daily_marker(path, error_prefix, errors):
         return {}
 
 
+def daily_cycle_required(marker, registry, now):
+    if marker.get('day') != now.date().isoformat():
+        return True
+    epoch = marker.get('result', {}).get('epoch')
+    if epoch is not None and (not isinstance(epoch, str) or len(epoch) > 160):
+        return True
+    row = registry.db.execute('SELECT status FROM epochs WHERE id=?', (epoch,)).fetchone() if epoch else None
+    return row is not None and row['status'] == 'superseded'
+
+
 def verified_stop_simulation(decision, runner=subprocess.run, api_factory=ReadOnlyAPI):
     """A fixed Docker stop command, only after independent current DRY-RUN proof."""
     if decision['state'] not in {'paused_risk', 'retired'}:
@@ -91,7 +101,7 @@ def once(root, stop=True, now=None, collector=fetch_crypto):
             status['errors'].append('risk_stop_' + type(exc).__name__)
         marker_file = state / 'last_daily.json'
         marker = read_daily_marker(marker_file, 'crypto_research', status['errors'])
-        if marker.get('day') != now.date().isoformat():
+        if daily_cycle_required(marker, registry, now):
             data_file = state / 'crypto_daily.json'
             try:
                 previous = read_json(data_file) if data_file.exists() else None
@@ -111,7 +121,7 @@ def once(root, stop=True, now=None, collector=fetch_crypto):
                     raise ValueError('equities_data_scope')
                 equity_marker_file = state / 'last_equities.json'
                 equity_marker = read_daily_marker(equity_marker_file, 'equities_research', status['errors'])
-                if equity_marker.get('day') != now.date().isoformat():
+                if daily_cycle_required(equity_marker, registry, now):
                     equity_marker = {'day': now.date().isoformat(), 'result': cycle(bundle, registry, now)}
                     atomic_write(equity_marker_file, json.dumps(equity_marker, allow_nan=False))
                 status['equities'] = {**equity_marker['result'], 'broker_orders_activated': False}

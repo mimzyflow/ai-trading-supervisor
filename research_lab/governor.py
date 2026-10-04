@@ -1,6 +1,8 @@
 """Persistent limits and genealogy. Retiring a bot never deletes its history."""
 import json
 import sqlite3
+from pathlib import Path
+from urllib.parse import quote
 from datetime import datetime, timezone
 from .data import finite, stamp, canonical_hash
 
@@ -11,9 +13,12 @@ VIRTUAL_CAPACITY = 100.0
 
 
 class Registry:
-    def __init__(self, path):
-        self.db = sqlite3.connect(str(path), timeout=5, isolation_level=None)
+    def __init__(self, path, initialize=True):
+        target = str(path) if initialize else 'file:' + quote(str(Path(path).resolve()), safe='/') + '?mode=rw'
+        self.db = sqlite3.connect(target, timeout=5, isolation_level=None, uri=not initialize)
         self.db.row_factory = sqlite3.Row
+        if not initialize:
+            return
         self.db.executescript('''
           CREATE TABLE IF NOT EXISTS bots(id TEXT PRIMARY KEY,parent TEXT,depth INTEGER,
             capacity REAL,status TEXT,validated INTEGER DEFAULT 0,spec TEXT);

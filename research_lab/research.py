@@ -1,6 +1,8 @@
 """Four fixed templates, frozen selection, genuinely later one-use holdout."""
 import json
 import hashlib
+import re
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from .data import canonical_hash, stamp, subset, validate
@@ -49,42 +51,171 @@ def passing(result, benchmark, minimum_trades=5):
             and result['profit_factor'] >= 1.2 and not result['halted'])
 
 
+def research_scope(bundle):
+    return canonical_hash({'assets': sorted(a['id'] for a in bundle['assets']),
+                           'currency': bundle['currency'], 'frequency': 'daily'})
+
+
+def freeze_development(bundle, now):
+    count = len(bundle['assets'][0]['bars'])
+    if count < 600:
+        raise ValueError('insufficient_development_history')
+    split = int(count * 0.65)
+    training = subset(bundle, 0, split)
+    benchmark = simulate(bundle, {'family': 'buy_hold'}, start_index=split, risk_control=False, **costs(bundle))
+    trials = []
+    for spec in TEMPLATES:
+        train = simulate(training, spec, start_index=200, **costs(bundle))
+        selection = simulate(bundle, spec, start_index=split, **costs(bundle))
+        stress = simulate(bundle, spec, start_index=split, **costs(bundle, True))
+        eligible = passing(selection, benchmark) and train['return_pct'] > 0 and stress['return_pct'] > 0
+        trials.append({'spec': spec, 'training': compact(train), 'selection': compact(selection),
+                       'stress': compact(stress), 'eligible': eligible})
+    eligible = [trial for trial in trials if trial['eligible']]
+    selected = max(eligible, key=lambda trial: trial['selection']['return_pct'])['spec'] if eligible else None
+    return {'scope': research_scope(bundle), 'frozen_at': now.isoformat(),
+            'templates_sha256': canonical_hash(TEMPLATES), 'implementation_sha256': implementation_hash(),
+            'data_sha256': canonical_hash(bundle), 'selected': selected, 'trials': trials,
+            'frozen_history_count': count, 'frozen_history_sha256': frozen_history_hash(bundle, count),
+            'selection_benchmark': compact(benchmark), 'quality_verified': quality(bundle),
+            'future_holdout_sessions': 126, 'real_money_eligible': False}
+
+
+def prepare_resume(bundle, db, parent_epoch, now=None, expected_parent_sha256=None):
+    """Read-only proposal: only an unselected, unevaluated frozen plan may resume."""
+    now = now or datetime.now(timezone.utc)
+    data = validate(deepcopy(bundle), now)
+    scope = research_scope(data)
+    row = db.execute('SELECT * FROM epochs WHERE id=?', (parent_epoch,)).fetchone()
+    if not row or row['status'] != 'frozen':
+        raise ValueError('frozen_parent_required')
+    plan = json.loads(row['plan'])
+    fingerprint = canonical_hash({'id': row['id'], 'status': row['status'],
+                                  'plan': plan, 'result': json.loads(row['result'])})
+    if expected_parent_sha256 is not None and fingerprint != expected_parent_sha256:
+        raise ValueError('parent_changed_since_preview')
+    if plan.get('selected') is not None or json.loads(row['result']) != {}:
+        raise ValueError('unselected_unevaluated_parent_required')
+    if plan.get('scope') != scope:
+        raise ValueError('resume_scope_mismatch')
+    frozen = stamp(plan['frozen_at'])
+    if frozen > now:
+        raise ValueError('parent_freeze_is_future')
+    old_implementation = plan.get('implementation_sha256')
+    if not isinstance(old_implementation, str) or not re.fullmatch('[a-f0-9]{64}', old_implementation):
+        raise ValueError('invalid_parent_implementation')
+    current_implementation = implementation_hash()
+    if old_implementation == current_implementation:
+        raise ValueError('implementation_unchanged')
+    root = db.execute("SELECT status FROM bots WHERE id='root'").fetchone()
+    if not root or root['status'] != 'research_only':
+        raise ValueError('research_only_root_required')
+    proof = plan.get('frozen_history_sha256')
+    count = plan.get('frozen_history_count')
+    if proof is not None or count is not None:
+        if not isinstance(proof, str) or not re.fullmatch('[a-f0-9]{64}', proof):
+            raise ValueError('invalid_parent_history_proof')
+        if frozen_history_hash(data, count) != proof:
+            raise ValueError('parent_frozen_history_changed')
+        if any(stamp(bar['close_at']) > frozen for asset in data['assets'] for bar in asset['bars'][:count]):
+            raise ValueError('inconsistent_parent_history_cutoff')
+        proof_kind = 'frozen_history_sha256'
+    else:
+        # Legacy 557510a stored a complete bundle hash. Reconstruct exactly that
+        # bundle at its original freeze, including all instrument metadata.
+        original = {**data, 'assets': [{**asset, 'bars': [bar for bar in asset['bars']
+                    if stamp(bar['close_at']) <= frozen]} for asset in data['assets']]}
+        if canonical_hash(original) != plan.get('data_sha256'):
+            raise ValueError('legacy_frozen_bundle_unverifiable')
+        proof_kind = 'legacy_complete_bundle_sha256'
+    if len(data['assets'][0]['bars']) < 600:
+        raise ValueError('insufficient_development_history')
+    consumed = db.execute('SELECT scope,start,end,epoch FROM consumed WHERE scope=? OR epoch=?',
+                          (scope, parent_epoch)).fetchall()
+    for window in consumed:
+        if window['epoch'] == parent_epoch:
+            raise ValueError('parent_has_consumed_holdout')
+        start, end = stamp(window['start']), stamp(window['end'])
+        if start > end or end > now:
+            raise ValueError('inconsistent_consumed_window')
+    period = scope + ':' + now.strftime('%Y-%m')
+    for other in db.execute("SELECT id,status,plan FROM epochs WHERE id LIKE ? AND status IN ('frozen','evaluated')", (scope + ':%',)):
+        if other['id'] == parent_epoch:
+            continue
+        if (other['status'] == 'frozen' and json.loads(other['plan']).get('selected')) or other['id'] == period or other['id'].startswith(period + ':revision:'):
+            raise ValueError('competing_research_plan')
+    return {'state': 'ready_to_refreeze_development', 'parent_epoch': parent_epoch,
+            'expected_parent_sha256': fingerprint, 'scope': scope,
+            'previous_implementation_sha256': old_implementation,
+            'implementation_sha256': current_implementation, 'history_proof': proof_kind,
+            'development_sessions': len(data['assets'][0]['bars']), 'data_sha256': canonical_hash(data),
+            'future_holdout_sessions': 126, 'new_freeze_at_preview': now.isoformat(),
+            'preserved_consumed_windows': db.execute('SELECT COUNT(*) FROM consumed').fetchone()[0],
+            'broker_orders_activated': False, 'real_money_eligible': False}
+
+
+def apply_resume(bundle, registry, parent_epoch, expected_parent_sha256, now=None):
+    """Append a revision atomically; never delete old plans, events or windows."""
+    if not isinstance(expected_parent_sha256, str) or not re.fullmatch('[a-f0-9]{64}', expected_parent_sha256):
+        raise ValueError('expected_parent_sha256_required')
+    fixed_test_time = now is not None
+    now = now or datetime.now(timezone.utc)
+    registry.db.execute('BEGIN IMMEDIATE')
+    try:
+        preview = prepare_resume(bundle, registry.db, parent_epoch, now, expected_parent_sha256)
+        data = validate(deepcopy(bundle), now)
+        plan = freeze_development(data, now)
+        frozen_at = now if fixed_test_time else max(now, datetime.now(timezone.utc))
+        # The actual freeze follows development computation, including a run
+        # crossing a session/month boundary. Preview time never backdates it.
+        preview = prepare_resume(bundle, registry.db, parent_epoch, frozen_at, expected_parent_sha256)
+        plan['frozen_at'] = frozen_at.isoformat()
+        if plan['implementation_sha256'] != preview['implementation_sha256']:
+            raise ValueError('implementation_changed_during_resume')
+        plan.update(resumes_epoch=parent_epoch, parent_sha256=expected_parent_sha256,
+                    previous_implementation_sha256=preview['previous_implementation_sha256'],
+                    resume_decision='refreeze_development', parent_history_proof=preview['history_proof'])
+        epoch = preview['scope'] + ':' + frozen_at.strftime('%Y-%m') + ':revision:' + canonical_hash(plan)[:16]
+        registry.db.execute('INSERT INTO epochs VALUES(?,?,?,?)', (epoch, json.dumps(plan), 'frozen', '{}'))
+        registry.db.execute("UPDATE epochs SET status='superseded' WHERE id=?", (parent_epoch,))
+        registry.event('research_plan_explicitly_refrozen', {'parent_epoch': parent_epoch, 'epoch': epoch,
+                       'parent_sha256': expected_parent_sha256, 'frozen_at': frozen_at.isoformat(),
+                       'history_proof': preview['history_proof'], 'data_sha256': plan['data_sha256'],
+                       'preserved_consumed_windows': preview['preserved_consumed_windows'],
+                       'prior_observations_used_as': 'development_only', 'real_money_eligible': False})
+        registry.db.execute('COMMIT')
+        return {'state': 'development_refrozen', 'parent_epoch': parent_epoch, 'epoch': epoch,
+                'frozen_at': frozen_at.isoformat(), 'selected_candidate': plan['selected'] is not None,
+                'future_holdout_sessions': 126, 'preserved_consumed_windows': preview['preserved_consumed_windows'],
+                'broker_orders_activated': False, 'real_money_eligible': False}
+    except Exception:
+        registry.db.execute('ROLLBACK')
+        raise
+
+
 def cycle(bundle, registry, now=None):
     validate(bundle, now)
     now = now or datetime.now(timezone.utc)
-    scope = canonical_hash({'assets': sorted(a['id'] for a in bundle['assets']), 'currency': bundle['currency'], 'frequency': 'daily'})
+    scope = research_scope(bundle)
     epoch_id = scope + ':' + now.strftime('%Y-%m')
     # Keep a selected frozen experiment alive across month boundaries.
     pending = [r for r in registry.db.execute('SELECT * FROM epochs WHERE id LIKE ? AND status=? ORDER BY id', (scope + ':%', 'frozen'))
                if json.loads(r['plan']).get('selected')]
-    row = pending[0] if pending else registry.db.execute('SELECT * FROM epochs WHERE id=?', (epoch_id,)).fetchone()
+    revisions = registry.db.execute("SELECT * FROM epochs WHERE id LIKE ? AND status IN ('frozen','evaluated') ORDER BY id", (epoch_id + ':revision:%',)).fetchall()
+    if len(revisions) > 1:
+        raise ValueError('ambiguous_active_research_revision')
+    row = pending[0] if pending else (revisions[0] if revisions else registry.db.execute('SELECT * FROM epochs WHERE id=?', (epoch_id,)).fetchone())
     if row:
         epoch_id = row['id']
+        if row['status'] == 'superseded':
+            return {'state': 'superseded_plan_missing_revision', 'epoch': epoch_id, 'real_money_eligible': False}
     if not row:
         count = len(bundle['assets'][0]['bars'])
         if count < 600:
             return {'state': 'insufficient_development_history', 'sessions': count, 'required': 600, 'real_money_eligible': False}
-        split = int(count * 0.65)
-        training = subset(bundle, 0, split)
-        benchmark = simulate(bundle, {'family': 'buy_hold'}, start_index=split, risk_control=False, **costs(bundle))
-        trials = []
-        for spec in TEMPLATES:
-            train = simulate(training, spec, start_index=200, **costs(bundle))
-            selection = simulate(bundle, spec, start_index=split, **costs(bundle))
-            stress = simulate(bundle, spec, start_index=split, **costs(bundle, True))
-            # Selection/validation are development, never called independent tests.
-            eligible = passing(selection, benchmark) and train['return_pct'] > 0 and stress['return_pct'] > 0
-            trials.append({'spec': spec, 'training': compact(train), 'selection': compact(selection), 'stress': compact(stress), 'eligible': eligible})
-        eligible = [trial for trial in trials if trial['eligible']]
-        selected = max(eligible, key=lambda t: t['selection']['return_pct'])['spec'] if eligible else None
-        plan = {'scope': scope, 'frozen_at': now.isoformat(), 'templates_sha256': canonical_hash(TEMPLATES),
-                'implementation_sha256': implementation_hash(),
-                'data_sha256': canonical_hash(bundle), 'selected': selected, 'trials': trials,
-                'frozen_history_count': count, 'frozen_history_sha256': frozen_history_hash(bundle, count),
-                'selection_benchmark': compact(benchmark), 'quality_verified': quality(bundle),
-                'future_holdout_sessions': 126, 'real_money_eligible': False}
+        plan = freeze_development(bundle, now)
         registry.db.execute('INSERT INTO epochs VALUES(?,?,?,?)', (epoch_id, json.dumps(plan), 'frozen', '{}'))
-        registry.event('research_plan_frozen', {'epoch': epoch_id, 'selected': selected, 'data_sha256': plan['data_sha256']})
+        registry.event('research_plan_frozen', {'epoch': epoch_id, 'selected': plan['selected'], 'data_sha256': plan['data_sha256']})
     else:
         plan = json.loads(row['plan'])
     if plan['templates_sha256'] != canonical_hash(TEMPLATES) or plan.get('implementation_sha256') != implementation_hash():

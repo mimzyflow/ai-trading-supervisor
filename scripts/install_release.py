@@ -12,6 +12,30 @@ def run(argv, **kwargs):
     return subprocess.run(argv, check=True, **kwargs)
 
 
+def preflight_simulation_compose(compose):
+    """Inspect private resolved configuration without emitting credentials."""
+    try:
+        resolved = run(compose + ['config', '--format', 'json'], capture_output=True, text=True)
+        config = json.loads(resolved.stdout)
+        environment = config['services']['freqtrade']['environment']
+    except Exception:
+        raise ValueError('resolved_compose_unavailable') from None
+    if not isinstance(environment, dict):
+        raise ValueError('resolved_compose_environment_invalid')
+    dry_run = environment.get('FREQTRADE__DRY_RUN')
+    if dry_run is not True and dry_run != 'true':
+        raise ValueError('resolved_compose_requires_dry_run')
+    for name in ['FREQTRADE__EXCHANGE__KEY', 'FREQTRADE__EXCHANGE__SECRET']:
+        value = environment.get(name)
+        if value is not None and value != '':
+            raise ValueError('resolved_compose_exchange_credentials_present')
+
+
+def activate_simulation(compose, arguments):
+    preflight_simulation_compose(compose)
+    run(compose + ['up'] + arguments)
+
+
 def restore_files(root, backup, files, existed):
     """Restore this release's files without touching secrets or trading data."""
     for relative in files:
@@ -53,6 +77,10 @@ def install(params):
         tar.extractall(stage, filter='data')
     run(['python3', 'scripts/check_simulation.py'], cwd=stage)
     run(['python3', '-m', 'unittest', 'discover', '-s', 'tests'], cwd=stage)
+    # Resolve the candidate using the existing private project environment before
+    # changing active files. A refusal here must never enter activation/rollback.
+    candidate_compose = ['docker', 'compose', '--project-directory', str(root), '-f', str(stage / 'docker-compose.yml')]
+    preflight_simulation_compose(candidate_compose)
     files = [p.relative_to(stage) for p in stage.rglob('*') if p.is_file() and '__pycache__' not in p.parts]
     existed = []
     for relative in files + [Path('build-info.json')]:
@@ -72,9 +100,7 @@ def install(params):
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(stage / relative, destination)
         (root / 'build-info.json').write_text(json.dumps({**params, 'deployed_at': datetime.now(timezone.utc).isoformat(), 'backup': str(backup)}, indent=2))
-        # Suppress resolved config: it includes UI credentials.
-        run(compose + ['config', '--quiet'], stdout=subprocess.DEVNULL)
-        run(compose + ['up', '-d', '--wait', '--wait-timeout', '120'])
+        activate_simulation(compose, ['-d', '--wait', '--wait-timeout', '120'])
         containers = json.loads(run(['docker', 'inspect', 'ai-trading-freqtrade', 'ai-trading-supervisor'], capture_output=True, text=True).stdout)
         for container in containers:
             if container['State'].get('Health', {}).get('Status') != 'healthy':
@@ -95,11 +121,14 @@ def install(params):
             else:
                 path.write_bytes(previous)
         subprocess.run(['systemctl', 'daemon-reload'], capture_output=True)
+        # Restored code still uses the current private environment. Validate it
+        # before either the research timer or a container can resume.
+        preflight_simulation_compose(compose)
         if timer_previously_enabled:
             subprocess.run(['systemctl', 'enable', '--now', 'trading-research.timer'], capture_output=True)
         else:
             subprocess.run(['systemctl', 'disable', 'trading-research.timer'], capture_output=True)
-        run(compose + ['up', '-d'])
+        activate_simulation(compose, ['-d'])
         print(json.dumps({'deployment': 'rolled_back', 'backup': str(backup)}))
         raise
 

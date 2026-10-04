@@ -81,3 +81,25 @@ réinitialisation ni activation opérationnelle n'a été effectuée.
 Restent les prérequis de `RETURN_CHECKLIST.md` : choix des instruments et du
 compte papier, identifiants privés, données vérifiées, exécuteur prospectif,
 recette papier et observation future. Le réel reste désactivé.
+
+### Reprise explicite ajoutée et vérifiée à 02:01 UTC
+
+Le blocage de reprise décrit plus haut dispose désormais d'une procédure
+explicite : [`RESEARCH_RESUME.md`](RESEARCH_RESUME.md). Le parent sans candidate
+ni contrôle réservé est conservé ; la nouvelle révision utilise un gel réel et
+demande 126 séances entièrement postérieures. Aperçu par défaut, empreinte du
+parent requise, verrou worker, transaction et refus des états incertains.
+Le déploiement vérifie aussi la configuration Compose privée avant toute copie
+active et toute activation, puis conserve ses contrôles Docker/API postérieurs.
+
+- Suite locale : **100 tests, succès, 3 ignorés** (pandas absent).
+- Suite Oracle isolée dans l'image Freqtrade épinglée ci-dessus : **100 tests,
+  succès, aucun ignoré**, 3,134 secondes. Mêmes limites réseau/ressources et
+  aucun montage de production. Paquet de 48 fichiers publics/Python, SHA-256
+  `a6c30f75ed9f6be3a60b238f3515a68c534efb10f5cd5feed1256acca23b26ce`.
+- Aperçu Oracle en lecture seule : reconstruction exacte du bundle ancien et
+  des métadonnées réussie, 721 séances de développement, zéro fenêtre consommée.
+
+Ces vérifications précèdent le déploiement et la décision de reprise. Elles ne
+valident aucune stratégie ni rentabilité. La recette papier et l'observation
+prospective restent à faire.
