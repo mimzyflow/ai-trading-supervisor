@@ -29,14 +29,13 @@ pendant cette consultation. La mise en page initiale a été terminée pour lire
 le panneau ; aucun ordre, dépôt, nouveau compte, terme ou clé n'a été validé.
 Cette visibilité ne prouve ni une connexion API ni une simulation papier.
 
-Le formulaire officiel [Kraken Stocks](https://support.kraken.com/forms/35615372938260)
-est ouvert avec une demande préparée sur l'API actions classiques pour un compte
-particulier français, les endpoints/permissions et un environnement de test sans
-fonds réels. Son bouton `Envoyer` est disponible. L'envoi est laissé à Moussa ;
-aucun message n'a été envoyé par l'agent. Le formulaire indique qu'une validation
-de l'email est requise avant transmission au support. Aucune réponse Kraken n'est
-encore disponible. Aucun email, identifiant de compte ou donnée de portefeuille
-n'est copié dans ce dépôt.
+La demande sur l'API actions classiques et un environnement de test sans fonds
+réels a été validée à la main. La page de confirmation officielle `Kraken Stocks`
+a été lue le 4 octobre après les simulations : « Merci pour votre demande ».
+Aucun envoi n'a été effectué par l'agent. La page indique qu'une vérification
+d'email peut encore être demandée ; cette vérification n'est pas confirmée ici.
+La réponse technique sur l'API et le mode papier reste à vérifier. Aucun email,
+identifiant de compte ou donnée de portefeuille n'est copié dans ce dépôt.
 
 ## Simulation et code existant
 
@@ -67,9 +66,9 @@ sont pas modifiés par cette analyse.
 
 ## Prochaine étape utile
 
-1. La connexion et la consultation des actions sont faites. Moussa peut valider
-   la demande préparée dans le formulaire Kraken Stocks et la vérification
-   d'email éventuellement demandée. Pour le bot, obtenir une confirmation
+1. La connexion, la consultation des actions et la confirmation de soumission
+   du formulaire sont vérifiées. Une vérification d'email peut être demandée
+   à Moussa. Pour le bot, obtenir une confirmation
    explicite de l'API, du périmètre et du mode papier utilisable. Si un
    questionnaire ou des termes sont ensuite requis, ils restent à sa main.
    Aucun identifiant API n'est à demander avant la confirmation d'une voie utile.
@@ -85,6 +84,10 @@ Une simulation locale sur données publiques est une piste de recherche limitée
 sans compte ni argent réel. Elle ne prouve ni l'éligibilité à trader sur Kraken,
 ni une stratégie validée, ni la disponibilité de l'API finale. Aucun compte,
 clé ou ordre n'a été connecté lors de cette analyse en lecture seule.
+
+Cette piste a été autorisée puis exécutée indépendamment de Kraken :
+[72 simulations actions sans compte](EQUITY_SIMULATION_RESULTS_2026-10-04.md).
+Aucune variante retenue, aucun raccordement courtier et aucun passage en réel.
 
 ## Sources officielles consultées le 4 octobre 2026
 

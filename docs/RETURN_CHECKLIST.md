@@ -13,8 +13,9 @@ ou la chaîne prospective sont déjà opérationnels.
    sous conditions via fiat/Convert, mais pas par carnet/API. Les actions
    classiques sont officiellement disponibles aux clients français éligibles
    via Kraken Pro web/app et l'app Kraken, pas `kraken.com/c`. Connexion et
-   consultation `Marchés > Actions` vérifiées ; formulaire Kraken Stocks ouvert,
-   demande technique préparée, envoi laissé à Moussa. Un éventuel questionnaire
+   consultation `Marchés > Actions` vérifiées ; confirmation officielle
+   de soumission du formulaire Kraken Stocks lue. Une éventuelle vérification
+   d'email reste à la main de Moussa. Un éventuel questionnaire
    ou accord reste à sa main. Aucune activation ou transaction nouvelle effectuée.
    Leur API et leur mode papier utiles au bot restent à confirmer pour son
    compte. Aucun identifiant API n'est
