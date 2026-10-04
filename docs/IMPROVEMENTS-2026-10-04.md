@@ -57,7 +57,8 @@ La suite a aussi été exécutée sur Oracle, dans un conteneur de test isolé :
 
 ## Limites et reprise
 
-Ces correctifs n'ont pas été déployés sur Oracle. Ils ne valident aucune
+À cette vérification initiale, les correctifs n'étaient pas déployés sur Oracle.
+Ils ne valident aucune
 stratégie, aucun rendement ni aucun accès courtier. Aucun compte, clé, ordre
 ou historique opérationnel n'a été modifié pendant leur vérification.
 
@@ -103,3 +104,34 @@ active et toute activation, puis conserve ses contrôles Docker/API postérieurs
 Ces vérifications précèdent le déploiement et la décision de reprise. Elles ne
 valident aucune stratégie ni rentabilité. La recette papier et l'observation
 prospective restent à faire.
+
+### Déploiement et reprise constatés à 02:07:09 UTC
+
+- Commit opérationnel `e01d8ed06bac166205a8cc2ec732377383a0c329` publié sur
+  `main`, déployé par le mécanisme existant après revue et aperçu legacy réussi.
+  Prévalidation Compose privée passée, avant activation et relue après.
+- Sauvegarde cohérente privée du registre, permissions 0600 :
+  `/home/ubuntu/trading-releases/state-before-20261004T020421Z`.
+  Snapshot du code précédent :
+  `/home/ubuntu/trading-releases/previous-20261004T020503Z`.
+- Parent relu juste avant la décision : figé, aucune candidate ni résultat,
+  zéro fenêtre consommée, identique à la sauvegarde. Nouvel aperçu réussi à
+  02:05:59 UTC, empreinte attendue vérifiée puis décision explicite appliquée.
+- Révision `480cf13c30f9a23f`, gel réel
+  `2026-10-04T02:06:02.168577+00:00`. Parent `superseded`, JSON du plan et résultat
+  exactement conservés ; ancien événement conservé. Registre : deux plans,
+  deux événements, zéro fenêtre consommée. Aucun état supprimé/réinitialisé.
+- Aucun candidat n'a passé le développement. Les 126 séances de contrôle,
+  si une candidate est ultérieurement sélectionnée selon le protocole, devront
+  être entièrement postérieures au gel de leur plan. Aucune validation future
+  n'est attribuée aux observations déjà vues.
+- Worker existant exécuté : marqueur quotidien et rapport pointent la révision,
+  état `no_candidate_passed_development`, erreurs vides, profil `research_only`.
+- Les deux conteneurs sont sains, timer actif et activé au démarrage. API moteur
+  confirmée `dry_run=true`, `running`, `spot`, identifiants exchange absents.
+  Aucun compte, ordre réel ou clé exchange ajouté. Dossier de tests temporaire
+  supprimé, aucun téléchargement d'image.
+
+La mise à jour documentaire postérieure au déploiement ne change pas le code
+opérationnel ci-dessus. Restent la recette papier et les observations futures,
+ainsi que les prérequis privés de `RETURN_CHECKLIST.md`.

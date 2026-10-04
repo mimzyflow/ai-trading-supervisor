@@ -75,3 +75,12 @@ consommée. Le parent octobre était figé, sans candidate ni résultat. Son
 empreinte d'aperçu était
 `2c6a6647aaaf566b46df2c2110e709c839554fdc07b8c36d12d9f4ffa19b97a6`.
 Cette observation précède la décision et ne prouve aucune activation.
+
+Le commit `e01d8ed` a ensuite été déployé par le mécanisme existant. L'aperçu a
+été refait à 02:05:59 UTC, le parent comparé exactement à la sauvegarde privée,
+puis la décision explicite a créé la révision `480cf13c30f9a23f` à
+`2026-10-04T02:06:02.168577+00:00`. Vérification à 02:07:09 UTC : parent JSON et
+résultat conservés, anciens événements conservés, deux plans, deux événements,
+zéro fenêtre consommée. Aucune candidate ne passe le développement. Marqueur
+et rapport pointent la révision, sans erreur. Deux conteneurs sains, timer
+actif/activé et API DRY-RUN spot en fonctionnement, aucune clé exchange injectée.
