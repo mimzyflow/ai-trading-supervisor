@@ -7,23 +7,38 @@ ou la chaîne prospective sont déjà opérationnels.
 
 ## Intervention de Moussa
 
-1. **Choisir le périmètre actions/ETF** : titres US en papier avec l'adaptateur
-   Alpaca préparé, ou actions européennes/ETF UCITS en EUR avec un courtier
-   compatible à examiner. Donner un ou deux instruments précisément identifiés.
-   Un titre américain et un ETF européen ne sont pas interchangeables.
-2. **Se connecter ou créer un compte papier dédié** pour le périmètre retenu,
+1. **Examiner Kraken en premier**, conformément à la préférence de Moussa.
+   Voir [`KRAKEN_ACTIONS_FEASIBILITY.md`](KRAKEN_ACTIONS_FEASIBILITY.md), sources
+   officielles consultées le 4 octobre 2026. Les xStocks EEE sont accessibles
+   sous conditions via fiat/Convert, mais pas par carnet/API. Les actions
+   classiques sont officiellement disponibles aux clients français éligibles
+   via Kraken Pro web/app et l'app Kraken, pas `kraken.com/c`. L'onglet Chrome
+   existant affiche la connexion Kraken Pro : Moussa s'authentifie, vérifie son
+   éligibilité et répond personnellement au questionnaire/acceptation des termes.
+   Leur API et leur mode papier utiles au bot restent à confirmer pour son
+   compte. Aucun identifiant API n'est
+   demandé avant cette confirmation. Alpaca ne remplace pas automatiquement
+   Kraken : si la voie est indisponible, Moussa choisit recherche locale sans
+   ordre ou examen explicite d'un autre courtier papier.
+2. **Choisir le périmètre actions/ETF** après cette vérification : un ou deux
+   instruments précisément identifiés, leur produit et leur devise. Actions
+   classiques, xStocks et ETF UCITS ne sont pas interchangeables. L'adaptateur
+   Alpaca Paper préparé couvre des titres US si cette option est retenue.
+3. **Se connecter ou créer un compte papier dédié**, uniquement après
+   confirmation d'une voie papier utile et choix du périmètre/courtier,
    gérer email/MFA et consentements. Aucun compte live ni dépôt n'est requis
-   pour préparer cette simulation. Pour la recette Alpaca préparée, choisir
+   pour préparer cette simulation. Si Alpaca est explicitement retenu, choisir
    **100 USD virtuels**, distincts des **100 EUR virtuels** de Kraken ; aucune
    conversion EUR/USD n'est supposée. Le solde par défaut de 100 000 USD ne
    passe pas notre contrôle initial. Le tableau de bord permet de créer un
    nouveau compte papier ; conserver tout compte/historique existant.
-3. **Générer les identifiants API papier et les installer en privé** avec nous
-   au retour. Ne jamais les mettre dans le chat, Notion, Git ou une capture.
-   N'utiliser aucune clé live ou Kraken pour cette connexion. Les deux variables
-   attendues par le contrôle sont `ALPACA_PAPER_KEY_ID` et
+4. **Générer les identifiants API papier de la voie confirmée**, puis les
+   installer en privé. Ne jamais les mettre dans le chat, Notion, Git ou une
+   capture. Le contrôle Alpaca préparé attend, seulement si Alpaca est choisi,
+   `ALPACA_PAPER_KEY_ID` et
    `ALPACA_PAPER_SECRET_KEY` ; aucun fichier de secrets n'est recherché.
-4. **Publication GitHub facultative** : créer un jeton dédié à ce seul dépôt,
+   Il ne peut utiliser aucune clé live ou Kraken.
+5. **Publication GitHub facultative** : créer un jeton dédié à ce seul dépôt,
    avec accès aux issues en écriture et expiration, puis l'installer dans
    l'environnement privé Oracle. Le connecteur disponible ne fournit pas de
    fonction de création de jeton. La simulation fonctionne sans ce jeton ;
@@ -34,7 +49,8 @@ pas toutes d'être physiquement devant le Mac. Aucune demande de clé par messag
 
 ## Travaux techniques que Codex peut reprendre ensuite
 
-- Lancer `scripts/check_paper_readiness.py` : uniquement GET, hôte papier fixé,
+- Si Alpaca est explicitement retenu, lancer `scripts/check_paper_readiness.py` :
+  uniquement GET, hôte papier fixé,
   compte actif/non bloqué, monnaie USD, cash et equity égaux aux 100 USD initiaux,
   zéro position et ordre en attente, un ou deux instruments autorisés/tradables.
   Le marché peut être fermé pendant ce contrôle. Le résultat ne prouve pas la
@@ -67,7 +83,7 @@ pas toutes d'être physiquement devant le Mac. Aucune demande de clé par messag
 - n8n reste reporté selon la décision antérieure ; sa connexion est un chantier
   distinct à reprendre après validation de la stratégie.
 
-## Contrôle disponible aujourd'hui
+## Contrôle Alpaca préparé, si cette voie est choisie
 
 ```sh
 python3 scripts/check_paper_readiness.py
@@ -83,3 +99,6 @@ Sources officielles consultées le 3 octobre 2026 :
 - [Alpaca Paper : compte papier, solde initial et nouveau compte](https://docs.alpaca.markets/us/docs/paper-trading)
 - [Alpaca Account : devise, cash, equity et blocages](https://docs.alpaca.markets/us/docs/account-plans)
 - [Alpaca GET account, hôte papier](https://docs.alpaca.markets/us/reference/getaccount-1)
+
+Analyse Kraken et sources actualisées le 4 octobre 2026 :
+[`KRAKEN_ACTIONS_FEASIBILITY.md`](KRAKEN_ACTIONS_FEASIBILITY.md).
