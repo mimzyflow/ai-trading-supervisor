@@ -20,11 +20,23 @@ les actions classiques : cette analyse ne conclut donc pas à une impossibilité
 générale. La confirmation restante pour le bot porte sur le produit exact,
 l'accès API du compte et le mode papier.
 
-L'onglet Chrome existant a été retrouvé pendant l'accompagnement et amené à la
-connexion Kraken Pro. Moussa doit s'authentifier personnellement, répondre aux
-questions requises et accepter les termes s'il souhaite poursuivre. Aucune
-authentification réussie, approbation actions, connexion API ou simulation papier
-n'est attestée à ce stade. Aucun ordre ni dépôt n'est requis pour cette revue.
+La connexion Kraken Pro a été confirmée après l'intervention personnelle de
+Moussa le 4 octobre 2026. La navigation réelle `Marchés > Actions` affiche les
+actions classiques et la page `stocks-nvda` présente un formulaire d'ordre.
+NVDA a servi uniquement à examiner ce parcours ; aucun instrument de stratégie
+n'est encore retenu. Aucun questionnaire ni activation actions n'a été affiché
+pendant cette consultation. La mise en page initiale a été terminée pour lire
+le panneau ; aucun ordre, dépôt, nouveau compte, terme ou clé n'a été validé.
+Cette visibilité ne prouve ni une connexion API ni une simulation papier.
+
+Le formulaire officiel [Kraken Stocks](https://support.kraken.com/forms/35615372938260)
+est ouvert avec une demande préparée sur l'API actions classiques pour un compte
+particulier français, les endpoints/permissions et un environnement de test sans
+fonds réels. Son bouton `Envoyer` est disponible. L'envoi est laissé à Moussa ;
+aucun message n'a été envoyé par l'agent. Le formulaire indique qu'une validation
+de l'email est requise avant transmission au support. Aucune réponse Kraken n'est
+encore disponible. Aucun email, identifiant de compte ou donnée de portefeuille
+n'est copié dans ce dépôt.
 
 ## Simulation et code existant
 
@@ -55,11 +67,12 @@ sont pas modifiés par cette analyse.
 
 ## Prochaine étape utile
 
-1. Moussa s'authentifie sur Kraken Pro, vérifie son éligibilité et effectue les
-   réponses personnelles/acceptations nécessaires à l'accès actions. Confirmer
-   ensuite le produit proposé à son compte français. Pour le bot, obtenir
-   une confirmation explicite de l'API, du périmètre et du mode papier utilisable.
-   Aucun identifiant API n'est à demander avant cette confirmation.
+1. La connexion et la consultation des actions sont faites. Moussa peut valider
+   la demande préparée dans le formulaire Kraken Stocks et la vérification
+   d'email éventuellement demandée. Pour le bot, obtenir une confirmation
+   explicite de l'API, du périmètre et du mode papier utilisable. Si un
+   questionnaire ou des termes sont ensuite requis, ils restent à sa main.
+   Aucun identifiant API n'est à demander avant la confirmation d'une voie utile.
 2. Choisir un ou deux instruments précisément identifiés, leur forme juridique,
    leur devise et le budget virtuel. Des actions classiques, des ETF UCITS et
    leurs représentations tokenisées ne sont pas interchangeables.
@@ -80,5 +93,6 @@ clé ou ordre n'a été connecté lors de cette analyse en lecture seule.
 - [Kraken : accès actions sur Kraken Pro, questionnaire et termes, guide du 17 août 2026](https://support.kraken.com/articles/unlock-stocks-trading-on-kraken-pro)
 - [Kraken : disponibilité xStocks et exigences EEE, article daté du 18 juin 2026](https://support.kraken.com/gb/articles/xstocks-availability)
 - [Kraken : FAQ API, environnement qualifié et paramètre validate](https://support.kraken.com/articles/advanced-api-faq)
+- [Kraken : AddOrder spot, permissions et classe tokenized_asset](https://docs.kraken.com/api-reference/trading/add-order)
 - [Kraken : FAQ xStocks, rebasing et dividendes, article daté du 18 septembre 2026](https://support.kraken.com/articles/xstocks-faq)
 - [Kraken : lancement xStocks du 30 juin 2025](https://blog.kraken.com/product/xstocks/tokenized-equities-now-available)

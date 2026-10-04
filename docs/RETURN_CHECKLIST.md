@@ -12,9 +12,10 @@ ou la chaîne prospective sont déjà opérationnels.
    officielles consultées le 4 octobre 2026. Les xStocks EEE sont accessibles
    sous conditions via fiat/Convert, mais pas par carnet/API. Les actions
    classiques sont officiellement disponibles aux clients français éligibles
-   via Kraken Pro web/app et l'app Kraken, pas `kraken.com/c`. L'onglet Chrome
-   existant affiche la connexion Kraken Pro : Moussa s'authentifie, vérifie son
-   éligibilité et répond personnellement au questionnaire/acceptation des termes.
+   via Kraken Pro web/app et l'app Kraken, pas `kraken.com/c`. Connexion et
+   consultation `Marchés > Actions` vérifiées ; formulaire Kraken Stocks ouvert,
+   demande technique préparée, envoi laissé à Moussa. Un éventuel questionnaire
+   ou accord reste à sa main. Aucune activation ou transaction nouvelle effectuée.
    Leur API et leur mode papier utiles au bot restent à confirmer pour son
    compte. Aucun identifiant API n'est
    demandé avant cette confirmation. Alpaca ne remplace pas automatiquement
