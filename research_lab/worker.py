@@ -12,6 +12,8 @@ from .collect import fetch_crypto_broad
 from .data import validate
 from .governor import Registry
 from .research import cycle
+from .equity_paper import load as load_equity_paper, advance as advance_equity_paper, save as save_equity_paper, summary as equity_paper_summary
+from .engine import TEMPLATES
 
 
 def read_json(path, maximum=8_000_000):
@@ -124,7 +126,13 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
                 if daily_cycle_required(equity_marker, registry, now):
                     equity_marker = {'day': now.date().isoformat(), 'result': cycle(bundle, registry, now)}
                     atomic_write(equity_marker_file, json.dumps(equity_marker, allow_nan=False))
-                status['equities'] = {**equity_marker['result'], 'broker_orders_activated': False}
+                paper_file = state / 'equity_paper.json'
+                paper = load_equity_paper(paper_file, now)
+                # Forward paper decisions use only sessions present in the current bundle at this observation.
+                paper = advance_equity_paper(bundle, paper, TEMPLATES[0], now=now)
+                save_equity_paper(paper_file, paper)
+                status['equities'] = {**equity_marker['result'], 'paper': equity_paper_summary(paper),
+                                      'broker_orders_activated': False}
             except Exception as exc:
                 status['equities'] = {'state': 'invalid_broker_data', 'error_type': type(exc).__name__, 'broker_orders_activated': False}
         # Factory needs verifiable forward evidence; backtests never satisfy it.
