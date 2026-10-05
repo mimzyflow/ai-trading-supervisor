@@ -303,6 +303,16 @@ class ResearchProtocolTests(unittest.TestCase):
             self.assertFalse(result['real_money_eligible']);reg.close()
 
 
+
+    def test_position_count_is_unbounded_by_default_but_cash_still_limits_exposure(self):
+        data=bundle(count=260)
+        base=data['assets'][0]
+        data['assets']=[{**base, 'id':f'TOY{i}'} for i in range(12)]
+        spec={'family':'buy_hold'}
+        result=simulate(data,spec,initial=100,allocation=10,fee=0,slippage=0,risk_control=False)
+        self.assertGreaterEqual(result['entry_attempts'], 10)
+        self.assertNotIn('max_positions', result)
+
 class PaperBrokerTests(unittest.TestCase):
     def test_paper_sell_can_only_reduce_owned_quantity(self):
         broker,calls=self.broker({'positions':[{'symbol':'TOY','qty':'1','market_value':'10'}]})

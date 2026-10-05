@@ -44,7 +44,7 @@ def source_hashes():
 
 
 def rules(data):
-    return {'initial': 100, 'allocation_per_asset': 20, 'whole_lots_only': True,
+    return {'initial': 100, 'allocation_per_asset': 20, 'position_count_limit': None, 'whole_lots_only': True,
             'warmup_sessions': WARMUP, 'templates': deepcopy(list(TEMPLATES)),
             'cost_scenarios': {'base': costs(data), 'stress': costs(data, True),
                                'zero_commission_hypothetical':

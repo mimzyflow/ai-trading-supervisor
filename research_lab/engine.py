@@ -32,14 +32,14 @@ def check_spec(spec):
 
 def simulate(bundle, spec, fee=0.008, min_commission=0, slippage=0.001,
              initial=100, allocation=20, max_drawdown=0.05, close_at_end=True,
-             start_index=0, risk_control=True, max_positions=2):
+             start_index=0, risk_control=True, max_positions=None):
     validate(bundle)
     check_spec(spec)
     initial, allocation = finite(initial, 0.00000001), finite(allocation, 0.00000001)
     if initial > 100 or allocation > 20:
         raise ValueError('simulation_budget_exceeded')
-    if type(max_positions) is not int or not 1 <= max_positions <= 2 or allocation * max_positions > initial * 0.4 + 1e-8:
-        raise ValueError('simulation_position_limit_exceeded')
+    if max_positions is not None and (type(max_positions) is not int or max_positions < 1):
+        raise ValueError('invalid_optional_position_limit')
     fee, min_commission, slippage = finite(fee, 0), finite(min_commission, 0), finite(slippage, 0)
     if fee > 0.02 or slippage > 0.02 or not 0 < max_drawdown <= 0.05:
         raise ValueError('invalid_cost_or_risk_limit')
@@ -128,7 +128,7 @@ def simulate(bundle, spec, fee=0.008, min_commission=0, slippage=0.001,
                 sell(asset, bar, bar['open'], 'risk_halt' if halted else 'trend_exit')
         if not halted and i >= start_index:
             for asset, bar in current:
-                if len(positions) >= max_positions:
+                if max_positions is not None and len(positions) >= max_positions:
                     break
                 if asset['id'] in positions or bar['volume'] <= 0:
                     continue
