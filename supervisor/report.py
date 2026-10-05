@@ -132,7 +132,7 @@ def collect(api=None):
         if data["mode"] != "DRY-RUN":
             data["alerts"].append("CRITIQUE : moteur en mode réel inattendu. Aucune action financière exécutée par le superviseur.")
         scope_ok = config.get("trading_mode") == "spot" and config.get("exchange") == "kraken" and config.get("stake_currency") == "EUR"
-        limits_ok = 0 < number(config.get("max_open_trades")) <= 2 and 0 < number(config.get("stake_amount")) <= 20 and not config.get("force_entry_enable") and -1 < number(config.get("stoploss")) < 0
+        limits_ok = number(config.get("max_open_trades")) == -1 and 0 < number(config.get("stake_amount")) <= 20 and not config.get("force_entry_enable") and -1 < number(config.get("stoploss")) < 0
         data["configuration_safe"] = scope_ok and limits_ok and data["mode"] == "DRY-RUN"
         if not scope_ok:
             data["alerts"].append("Configuration différente du périmètre Kraken spot EUR autorisé.")

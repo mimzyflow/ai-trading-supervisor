@@ -17,7 +17,7 @@ from scripts.check_simulation import validate
 class FakeAPI:
     def __init__(self, values=None, fail=False):
         self.values = values or {
-            "show_config": {"dry_run": True, "state": "running", "strategy": "MoussaBaseline", "version": "test", "timeframe": "15m", "trading_mode": "spot", "exchange": "kraken", "stake_currency": "EUR", "stake_amount": "20", "max_open_trades": 2, "stoploss": -0.04, "force_entry_enable": False},
+            "show_config": {"dry_run": True, "state": "running", "strategy": "MoussaBaseline", "version": "test", "timeframe": "15m", "trading_mode": "spot", "exchange": "kraken", "stake_currency": "EUR", "stake_amount": "10", "max_open_trades": -1, "stoploss": -0.04, "force_entry_enable": False},
             "balance": {"total": 97.0, "starting_capital": 90.0},
             "profit": {"profit_all_coin": -3.0, "profit_closed_coin": 1.0, "trade_count": 2, "closed_trade_count": 1},
             "status": [{"pair": "ETH/EUR", "stake_amount": 20}],
@@ -116,7 +116,7 @@ class SupervisionTests(unittest.TestCase):
 
     def test_non_spot_and_excessive_stake_are_rejected(self):
         api = FakeAPI()
-        for overrides in [{"trading_mode": "futures"}, {"stake_amount": "21"}, {"max_open_trades": 3}]:
+        for overrides in [{"trading_mode": "futures"}, {"stake_amount": "21"}, {"max_open_trades": 2}]:
             with self.subTest(overrides=overrides):
                 changed = FakeAPI(api.snapshot())
                 changed.values["show_config"].update(overrides)
