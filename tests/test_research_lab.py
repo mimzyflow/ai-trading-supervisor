@@ -280,7 +280,7 @@ class ResearchProtocolTests(unittest.TestCase):
             with patch('research_lab.research.implementation_hash',return_value='different'):
                 result=cycle(data,reg,datetime(2019,9,2,tzinfo=timezone.utc))
             self.assertEqual(result['state'],'implementation_changed_new_plan_required');reg.close()
-    def test_four_variants_frozen_once_and_future_holdout_waits(self):
+    def test_strategy_variants_frozen_once_and_future_holdout_waits(self):
         with tempfile.TemporaryDirectory() as folder:
             reg=Registry(Path(folder)/'r.sqlite'); data=bundle(count=600,start=datetime(2018,1,1,tzinfo=timezone.utc))
             now=datetime(2019,9,1,tzinfo=timezone.utc)
@@ -290,7 +290,7 @@ class ResearchProtocolTests(unittest.TestCase):
                 first=cycle(data,reg,now);calls=mocked.call_count
                 second=cycle(data,reg,datetime(2019,10,1,tzinfo=timezone.utc))
                 self.assertEqual(mocked.call_count,calls)
-            self.assertEqual(calls,13)
+            self.assertEqual(calls, 1 + 3 * len(TEMPLATES))
             self.assertEqual(first['epoch'],second['epoch'])
             self.assertEqual(second['state'],'awaiting_future_holdout')
             self.assertEqual(reg.db.execute('SELECT COUNT(*) FROM consumed').fetchone()[0],0)

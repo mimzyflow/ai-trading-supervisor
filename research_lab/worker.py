@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from supervisor.api import ReadOnlyAPI
 from supervisor.report import atomic_write
-from .collect import fetch_crypto
+from .collect import fetch_crypto_broad
 from .data import validate
 from .governor import Registry
 from .research import cycle
@@ -68,7 +68,7 @@ def verified_stop_simulation(decision, runner=subprocess.run, api_factory=ReadOn
     return 'simulation_container_stopped_data_preserved'
 
 
-def once(root, stop=True, now=None, collector=fetch_crypto):
+def once(root, stop=True, now=None, collector=fetch_crypto_broad):
     now = now or datetime.now(timezone.utc)
     state = root / 'research_state'
     state.mkdir(mode=0o700, parents=True, exist_ok=True)

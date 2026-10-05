@@ -5,13 +5,17 @@ from urllib.parse import urlencode
 from urllib.request import Request, build_opener
 from supervisor.api import NoRedirect
 from .data import validate, canonical_hash
+from .crypto_universe import discover_eur_universe
 
 
-def fetch_crypto(previous=None, now=None, opener=None):
+def fetch_crypto(previous=None, now=None, opener=None, selected=None, minimum_history=2, max_assets=None):
     now = now or datetime.now(timezone.utc)
     opener = opener or build_opener(NoRedirect()).open
     assets = []
-    for name, pair in [('BTC/EUR', 'XBTEUR'), ('ETH/EUR', 'ETHEUR')]:
+    selected = selected or [('BTC/EUR', 'XBTEUR'), ('ETH/EUR', 'ETHEUR')]
+    if not isinstance(selected, list) or not 1 <= len(selected) <= 20:
+        raise ValueError('invalid_crypto_research_universe')
+    for name, pair in selected:
         request = Request('https://api.kraken.com/0/public/OHLC?' + urlencode({'pair': pair, 'interval': 1440}), method='GET')
         with opener(request, timeout=10) as response:
             raw = response.read(2_000_001)
@@ -42,8 +46,33 @@ def fetch_crypto(previous=None, now=None, opener=None):
                 bars = [merged[key] for key in sorted(merged)]
         if any((datetime.fromisoformat(b['open_at']) - datetime.fromisoformat(a['open_at'])).total_seconds() != 86400 for a, b in zip(bars, bars[1:])):
             raise ValueError('daily_data_gap')
-        assets.append({'id': name, 'asset_class': 'crypto', 'currency': 'EUR', 'lot_size': 0.00000001, 'bars': bars})
+        if len(bars) >= minimum_history:
+            assets.append({'id': name, 'asset_class': 'crypto', 'currency': 'EUR', 'lot_size': 0.00000001, 'bars': bars})
+    if max_assets is not None:
+        assets = assets[:max_assets]
+    if not assets:
+        raise ValueError('no_crypto_assets_with_required_history')
+    # Different listing dates are expected. Research only uses the common closed
+    # daily history so every portfolio decision sees the same sessions.
+    common = set.intersection(*(set(b['open_at'] for b in a['bars']) for a in assets))
+    if len(common) < minimum_history:
+        raise ValueError('insufficient_common_crypto_history')
+    for asset in assets:
+        asset['bars'] = [b for b in asset['bars'] if b['open_at'] in common]
     bundle = {'schema_version': 1, 'currency': 'EUR', 'provider': 'kraken_public_ohlc', 'calendar_verified': True,
               'corporate_actions_verified': True, 'historical_universe_verified': False,
               'universe_policy': 'fixed_at_freeze', 'future_membership_tracking': True, 'assets': assets}
     return validate(bundle, now)
+
+
+def fetch_crypto_broad(previous=None, now=None, opener=None, limit=12):
+    # Scan deeper than the final portfolio so newly listed high-turnover assets
+    # cannot collapse the historical development window.
+    discovery = discover_eur_universe(opener=opener, limit=min(20, max(limit, 18)))
+    candidates = [(row['id'], row['pair']) for row in discovery['selected']]
+    bundle = fetch_crypto(previous=previous, now=now, opener=opener, selected=candidates,
+                          minimum_history=600, max_assets=limit)
+    discovery['selected_for_research'] = [a['id'] for a in bundle['assets']]
+    discovery['minimum_history_sessions'] = 600
+    bundle['universe_discovery'] = discovery
+    return bundle

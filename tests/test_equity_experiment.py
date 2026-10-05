@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from research_lab.data import canonical_hash
-from research_lab.engine import simulate
+from research_lab.engine import simulate, TEMPLATES
 from research_lab.equity_experiment import (WARMUP, benchmark_fills, causal_execution_bundle,
                                            prepare_experiment, run_prepared, variant_verdict)
 
@@ -47,7 +47,7 @@ class EquityExperimentTests(unittest.TestCase):
                 self.assertTrue((output / 'plan.json').exists())
                 self.assertTrue((output / 'started.json').exists())
                 self.assertEqual(kwargs['start_index'], WARMUP)
-                window = plan['windows'][len(calls) // 18]
+                window = plan['windows'][len(calls) // (3 * (len(TEMPLATES) + 2))]
                 passed = bundle['assets'][0]['bars']
                 self.assertEqual(passed[WARMUP]['open_at'][:10], window['first_session'])
                 self.assertEqual(passed[-1]['open_at'][:10], window['last_session'])
@@ -57,9 +57,9 @@ class EquityExperimentTests(unittest.TestCase):
                         'closed_trades': 0, 'halted': False, 'curve': [], 'trades': []}
             with patch('research_lab.equity_experiment.simulate', side_effect=fake):
                 result = run_prepared(output)
-            self.assertEqual(len(calls), 72)
-            self.assertEqual(len(result['runs']), 72)
-            self.assertEqual(set(result['variant_verdicts']), {f'template_{i}' for i in range(4)})
+            self.assertEqual(len(calls), 4 * 3 * (len(TEMPLATES) + 2))
+            self.assertEqual(len(result['runs']), 4 * 3 * (len(TEMPLATES) + 2))
+            self.assertEqual(set(result['variant_verdicts']), {f'template_{i}' for i in range(len(TEMPLATES))})
             self.assertIsNone(result['selection'])
             self.assertFalse(result['real_money_eligible'])
             for _, spec, kwargs in calls:

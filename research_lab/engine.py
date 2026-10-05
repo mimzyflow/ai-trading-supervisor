@@ -6,9 +6,17 @@ gaps and modeled costs can therefore exceed the halt threshold.
 import math
 from .data import finite, validate, stamp
 
-TEMPLATES = tuple({'family': 'trend_breakout', 'fast': fast, 'slow': slow,
-                   'breakout': window, 'stop_loss': 0.05, 'max_hold': 60}
-                  for fast, slow in [(20, 100), (50, 200)] for window in [20, 55])
+TEMPLATES = (
+    # Faster variants target higher-volatility moves; slower variants remain as controls.
+    {'family':'trend_breakout','fast':10,'slow':50,'breakout':10,'stop_loss':0.08,'max_hold':30},
+    {'family':'trend_breakout','fast':10,'slow':50,'breakout':20,'stop_loss':0.08,'max_hold':45},
+    {'family':'trend_breakout','fast':20,'slow':100,'breakout':20,'stop_loss':0.05,'max_hold':60},
+    {'family':'trend_breakout','fast':20,'slow':100,'breakout':55,'stop_loss':0.05,'max_hold':60},
+    {'family':'trend_breakout','fast':30,'slow':120,'breakout':20,'stop_loss':0.06,'max_hold':60},
+    {'family':'trend_breakout','fast':30,'slow':120,'breakout':55,'stop_loss':0.06,'max_hold':90},
+    {'family':'trend_breakout','fast':50,'slow':200,'breakout':20,'stop_loss':0.05,'max_hold':60},
+    {'family':'trend_breakout','fast':50,'slow':200,'breakout':55,'stop_loss':0.05,'max_hold':90},
+)
 
 
 def check_spec(spec):
@@ -24,12 +32,14 @@ def check_spec(spec):
 
 def simulate(bundle, spec, fee=0.008, min_commission=0, slippage=0.001,
              initial=100, allocation=20, max_drawdown=0.05, close_at_end=True,
-             start_index=0, risk_control=True):
+             start_index=0, risk_control=True, max_positions=2):
     validate(bundle)
     check_spec(spec)
     initial, allocation = finite(initial, 0.00000001), finite(allocation, 0.00000001)
-    if initial > 100 or allocation > 20 or allocation * len(bundle['assets']) > initial * 0.4 + 1e-8:
+    if initial > 100 or allocation > 20:
         raise ValueError('simulation_budget_exceeded')
+    if type(max_positions) is not int or not 1 <= max_positions <= 2 or allocation * max_positions > initial * 0.4 + 1e-8:
+        raise ValueError('simulation_position_limit_exceeded')
     fee, min_commission, slippage = finite(fee, 0), finite(min_commission, 0), finite(slippage, 0)
     if fee > 0.02 or slippage > 0.02 or not 0 < max_drawdown <= 0.05:
         raise ValueError('invalid_cost_or_risk_limit')
@@ -44,7 +54,11 @@ def simulate(bundle, spec, fee=0.008, min_commission=0, slippage=0.001,
         # Adjust only splits already effective by this session, never future actions.
         ratio = finite(asset['bars'][index].get('split_ratio', 1))
         history = []
-        for bar in reversed(asset['bars'][:index]):
+        # Signals only consume the longest configured lookback. Bounding this
+        # slice avoids quadratic work when the research universe is widened.
+        lookback = 250 if spec['family'] != 'trend_breakout' else max(spec['slow'], spec['breakout'] + 1)
+        source = asset['bars'][max(0, index - lookback):index]
+        for bar in reversed(source):
             history.append({key: bar[key] / ratio for key in ['close', 'high']})
             ratio *= finite(bar.get('split_ratio', 1))
         return list(reversed(history))
@@ -114,6 +128,8 @@ def simulate(bundle, spec, fee=0.008, min_commission=0, slippage=0.001,
                 sell(asset, bar, bar['open'], 'risk_halt' if halted else 'trend_exit')
         if not halted and i >= start_index:
             for asset, bar in current:
+                if len(positions) >= max_positions:
+                    break
                 if asset['id'] in positions or bar['volume'] <= 0:
                     continue
                 entry = spec['family'] == 'buy_hold' and i == start_index

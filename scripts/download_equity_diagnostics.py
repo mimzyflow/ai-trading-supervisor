@@ -97,7 +97,7 @@ def collect(output_root, name=None, opener=None, calendar=None, observed_at=None
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Download fixed SOFI/U public diagnostic data, without an account.')
+    parser = argparse.ArgumentParser(description='Download fixed broad high-volatility US research basket, without an account.')
     parser.add_argument('--name', help='New directory name under ignored research_results; existing names are refused.')
     args = parser.parse_args(argv)
     output_root = Path(__file__).resolve().parents[1] / 'research_results'

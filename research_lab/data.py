@@ -30,8 +30,8 @@ def validate(bundle, now=None):
     if bundle.get('schema_version') != 1 or bundle.get('currency') not in {'EUR', 'USD'}:
         raise ValueError('invalid_bundle')
     assets = bundle.get('assets')
-    if not isinstance(assets, list) or not 1 <= len(assets) <= 2:
-        raise ValueError('one_or_two_assets_required')
+    if not isinstance(assets, list) or not 1 <= len(assets) <= 32:
+        raise ValueError('research_universe_size_invalid')
     ids, dates = set(), None
     for asset in assets:
         asset_id = asset.get('id', '')
