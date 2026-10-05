@@ -127,7 +127,7 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
                     equity_marker = {'day': now.date().isoformat(), 'result': cycle(bundle, registry, now)}
                     atomic_write(equity_marker_file, json.dumps(equity_marker, allow_nan=False))
                 paper_file = state / 'equity_paper.json'
-                paper = load_equity_paper(paper_file, now)
+                paper = load_equity_paper(paper_file, now, last_session=bundle['assets'][0]['bars'][-1]['close_at'])
                 # Forward paper decisions use only sessions present in the current bundle at this observation.
                 paper = advance_equity_paper(bundle, paper, TEMPLATES[0], now=now)
                 save_equity_paper(paper_file, paper)

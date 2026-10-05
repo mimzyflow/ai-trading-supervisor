@@ -7,16 +7,16 @@ from .engine import check_spec
 
 SCHEMA = 1
 
-def new_state(now=None, initial=100):
+def new_state(now=None, initial=100, last_session=None):
     now = now or datetime.now(timezone.utc)
     return {'schema_version': SCHEMA, 'created_at': now.isoformat(), 'updated_at': now.isoformat(),
             'mode': 'BROKERLESS_PAPER', 'currency': 'USD', 'initial_cash': initial, 'cash': initial,
             'positions': {}, 'trades': [], 'equity': initial, 'peak_equity': initial,
-            'max_drawdown_pct': 0.0, 'last_session': None, 'real_money_eligible': False}
+            'max_drawdown_pct': 0.0, 'last_session': last_session, 'real_money_eligible': False}
 
-def load(path, now=None):
+def load(path, now=None, last_session=None):
     path=Path(path)
-    if not path.exists(): return new_state(now)
+    if not path.exists(): return new_state(now, last_session=last_session)
     value=json.loads(path.read_text())
     if value.get('schema_version') != SCHEMA or value.get('mode') != 'BROKERLESS_PAPER' or value.get('real_money_eligible') is not False:
         raise ValueError('invalid_equity_paper_state')
