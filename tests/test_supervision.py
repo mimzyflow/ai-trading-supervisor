@@ -72,6 +72,17 @@ class SupervisionTests(unittest.TestCase):
         (self.root / 'autonomy.json').write_text(json.dumps(value))
         self.assertEqual(report.read_research()['state'], 'stale')
 
+    def test_v2_metrics_exclude_predeployment_baseline(self):
+        result = report.collect(FakeAPI())
+        self.assertTrue(result["v2"]["baseline_history_excluded"])
+        self.assertEqual(result["v2"]["closed_trades"], 0)
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("INSERT INTO trades VALUES (3,'SOL/EUR',0,-0.02,-0.2,'2026-10-06 12:00:00','trend_exit')")
+        result = report.collect(FakeAPI())
+        self.assertEqual(result["v2"]["closed_trades"], 1)
+        self.assertEqual(result["v2"]["losses"], 1)
+        self.assertAlmostEqual(result["v2"]["realized_profit_eur"], -0.2)
+
     def test_reports_latent_loss_and_full_wallet_denominator(self):
         result = report.collect(FakeAPI())
         self.assertEqual(result["mode"], "DRY-RUN")

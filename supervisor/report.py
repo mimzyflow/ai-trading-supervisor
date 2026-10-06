@@ -18,6 +18,7 @@ DB = RUNTIME / "tradesv3.dryrun.sqlite"
 LOG = RUNTIME / "freqtrade.log"
 REPORTS = Path(os.environ.get("REPORTS_DIR", str(ROOT / "reports")))
 JARVIS_REPORT_FILE = os.environ.get("JARVIS_REPORT_FILE", "").strip()
+V2_DEPLOYED_AT = "2026-10-05T15:03:00+00:00"
 
 
 def utcnow():
@@ -73,10 +74,23 @@ def read_research():
         age = (utcnow() - observed).total_seconds()
         if raw.get('schema_version') != 1 or not 0 <= age <= 900:
             return {'state': 'stale'}
+        shadows = {}
+        for name, value in list(raw.get('equities', {}).get('v3_shadow', {}).items())[:3]:
+            if isinstance(value, dict):
+                shadows[str(name)[:40]] = {
+                    'equity': value.get('equity'),
+                    'return_pct': value.get('return_pct'),
+                    'open_positions': value.get('open_positions'),
+                    'closed_trades': value.get('closed_trades'),
+                    'max_drawdown_pct': value.get('max_drawdown_pct'),
+                }
         return {'state': 'current', 'observed_at': raw['generated_at'],
                 'risk': str(raw.get('risk', {}).get('state', 'unknown'))[:48],
                 'crypto': str(raw.get('crypto_research', {}).get('state', 'unknown'))[:64],
+                'v3_crypto': str(raw.get('v3_challengers', {}).get('state', 'unknown'))[:64],
+                'freqai_shadow': str(raw.get('freqai_shadow', {}).get('state', 'unknown'))[:64],
                 'equities': str(raw.get('equities', {}).get('state', 'unknown'))[:64],
+                'equity_v3': shadows,
                 'broker_orders_activated': False, 'max_bots': 3, 'real_money_eligible': False}
     except (OSError, ValueError, KeyError, TypeError):
         return {'state': 'unavailable', 'broker_orders_activated': False}
@@ -98,6 +112,12 @@ def collect(api=None):
         "observed_max_drawdown_pct": None, "wins": None, "losses": None,
         "last_trades": [], "alerts": [], "activity_note": "", "publication": read_publication(),
         "research": read_research(),
+        "v2": {
+            "deployed_at": V2_DEPLOYED_AT,
+            "baseline_history_excluded": True,
+            "closed_trades": None, "wins": None, "losses": None,
+            "realized_profit_eur": None, "profit_factor": None,
+        },
     }
     if not data["database_found"]:
         data["alerts"].append("Base Freqtrade absente : statistiques indisponibles.")
@@ -109,6 +129,24 @@ def collect(api=None):
                 data.update(total_trades=counts[0], open_trades=counts[1] or 0, closed_trades=counts[2] or 0)
                 result = conn.execute("SELECT COALESCE(SUM(close_profit_abs),0), SUM(CASE WHEN close_profit>0 THEN 1 ELSE 0 END), SUM(CASE WHEN close_profit<=0 THEN 1 ELSE 0 END) FROM trades WHERE is_open=0").fetchone()
                 data.update(realized_profit_eur=round(number(result[0]), 4), wins=result[1] or 0, losses=result[2] or 0)
+                v2 = conn.execute(
+                    """SELECT COUNT(*),
+                              SUM(CASE WHEN close_profit>0 THEN 1 ELSE 0 END),
+                              SUM(CASE WHEN close_profit<=0 THEN 1 ELSE 0 END),
+                              COALESCE(SUM(close_profit_abs),0),
+                              COALESCE(SUM(CASE WHEN close_profit_abs>0 THEN close_profit_abs ELSE 0 END),0),
+                              COALESCE(-SUM(CASE WHEN close_profit_abs<0 THEN close_profit_abs ELSE 0 END),0)
+                       FROM trades
+                       WHERE is_open=0 AND datetime(close_date) >= datetime(?)""",
+                    (V2_DEPLOYED_AT,),
+                ).fetchone()
+                data["v2"].update(
+                    closed_trades=v2[0] or 0,
+                    wins=v2[1] or 0,
+                    losses=v2[2] or 0,
+                    realized_profit_eur=round(number(v2[3]), 4),
+                    profit_factor=round(number(v2[4]) / number(v2[5]), 4) if number(v2[5]) > 0 else None,
+                )
                 rows = conn.execute("SELECT pair,close_profit,close_profit_abs,close_date,exit_reason FROM trades WHERE is_open=0 ORDER BY id DESC LIMIT 5").fetchall()
                 data["last_trades"] = [dict(zip(["pair", "close_profit", "close_profit_abs", "close_date", "exit_reason"], row)) for row in rows]
                 for trade in data["last_trades"]:
@@ -182,6 +220,13 @@ def render(data):
     lines = ["# Rapport Freqtrade", "", f"- Généré : {data['generated_at']}", f"- Observation moteur : {data.get('observed_at') or 'non vérifiée'}", f"- Validité : {data.get('max_age_seconds', 900)} secondes ; au-delà, état inconnu.", f"- Mode vérifié : **{data['mode']}**", f"- État : **{data['state']}**", f"- Stratégie : **{data['strategy']}** ({data['strategy_validation_state']})"]
     for label, key in [("Trades ouverts", "open_trades"), ("Trades clôturés", "closed_trades"), ("Valeur simulée EUR", "equity_eur"), ("P/L réalisé EUR", "realized_profit_eur"), ("P/L latent net estimé EUR", "unrealized_profit_eur"), ("P/L total EUR", "total_profit_eur"), ("Rendement sur portefeuille initial %", "total_return_pct"), ("Capital engagé EUR", "committed_capital_eur"), ("Risque théorique au stop, hors frais/glissement EUR", "estimated_stop_risk_eur"), ("Baisse maximale observée depuis suivi %", "observed_max_drawdown_pct")]:
         lines.append("- " + label + " : " + display(data.get(key)))
+    v2 = data.get("v2", {})
+    lines += ["", "## Performance prospective V2 uniquement",
+              "- Frontière : " + str(v2.get("deployed_at", "inconnue")),
+              "- Ancienne MoussaBaseline exclue : " + ("oui" if v2.get("baseline_history_excluded") else "non"),
+              "- Trades clôturés V2 : " + display(v2.get("closed_trades")),
+              "- P/L réalisé V2 EUR : " + display(v2.get("realized_profit_eur")),
+              "- Profit factor V2 : " + display(v2.get("profit_factor"))]
     lines += ["", "## Publication GitHub", "- État : " + str(data.get("publication", {}).get("state", "unknown")), "", "## Alertes"]
     lines += ["- " + str(a) for a in data["alerts"]] or ["- Aucune alerte détectée."]
     if data.get("activity_note"):

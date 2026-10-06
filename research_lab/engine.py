@@ -28,6 +28,18 @@ def check_spec(spec):
                 raise ValueError('invalid_template_parameter')
         if spec['fast'] >= spec['slow'] or not 0.005 <= finite(spec['stop_loss']) <= 0.10:
             raise ValueError('invalid_template_risk')
+        for key, low, high in [
+            ('take_profit', 0.005, 0.50),
+            ('trailing_activation', 0.005, 0.50),
+            ('trailing_distance', 0.002, 0.20),
+            ('min_atr_pct', 0.0, 0.50),
+            ('max_atr_pct', 0.001, 1.0),
+            ('min_volume_ratio', 0.0, 20.0),
+        ]:
+            if key in spec and not low <= finite(spec[key]) <= high:
+                raise ValueError('invalid_template_risk')
+        if spec.get('min_atr_pct', 0) >= spec.get('max_atr_pct', 1):
+            raise ValueError('invalid_template_volatility_band')
 
 
 def simulate(bundle, spec, fee=0.008, min_commission=0, slippage=0.001,
@@ -59,7 +71,9 @@ def simulate(bundle, spec, fee=0.008, min_commission=0, slippage=0.001,
         lookback = 250 if spec['family'] != 'trend_breakout' else max(spec['slow'], spec['breakout'] + 1)
         source = asset['bars'][max(0, index - lookback):index]
         for bar in reversed(source):
-            history.append({key: bar[key] / ratio for key in ['close', 'high']})
+            adjusted = {key: bar[key] / ratio for key in ['close', 'high', 'low']}
+            adjusted['volume'] = bar['volume']
+            history.append(adjusted)
             ratio *= finite(bar.get('split_ratio', 1))
         return list(reversed(history))
 
@@ -92,7 +106,8 @@ def simulate(bundle, spec, fee=0.008, min_commission=0, slippage=0.001,
             return
         cash -= cost
         positions[asset['id']] = {'quantity': quantity, 'cost': cost, 'price': price,
-                                  'entry': bar['open_at'], 'index': index, 'dividends': 0.0}
+                                  'entry': bar['open_at'], 'index': index, 'dividends': 0.0,
+                                  'highest_price': price}
 
     for i in range(len(assets[0]['bars'])):
         current = [(asset, asset['bars'][i]) for asset in assets]
@@ -103,12 +118,14 @@ def simulate(bundle, spec, fee=0.008, min_commission=0, slippage=0.001,
                 split = finite(bar.get('split_ratio', 1))
                 position['quantity'] *= split
                 position['price'] /= split
+                position['highest_price'] = position.get('highest_price', position['price']) / split
                 dividend = finite(bar.get('dividend_per_share', 0))
                 if dividend:
                     amount = position['quantity'] * dividend
                     receivables.append((stamp(bar['dividend_paid_at']), amount))
                     position['dividends'] += amount
                     position['price'] = max(0.00000001, position['price'] - dividend)
+                    position['highest_price'] = max(position['price'], position['highest_price'] - dividend)
         earliest = min(stamp(bar['open_at']) for _, bar in current)
         cash += sum(amount for paid, amount in receivables if paid <= earliest)
         receivables = [(paid, amount) for paid, amount in receivables if paid > earliest]
@@ -124,8 +141,39 @@ def simulate(bundle, spec, fee=0.008, min_commission=0, slippage=0.001,
             trend_exit = False
             if spec['family'] == 'trend_breakout' and len(previous) >= spec['slow']:
                 trend_exit = previous[-1]['close'] < sum(b['close'] for b in previous[-spec['slow']:]) / spec['slow']
-            if halted or trend_exit or (spec['family'] == 'trend_breakout' and i - position['index'] >= spec['max_hold']):
-                sell(asset, bar, bar['open'], 'risk_halt' if halted else 'trend_exit')
+                stop = position['price'] * (1 - spec['stop_loss'])
+                if bar['open'] <= stop:
+                    sell(asset, bar, bar['open'], 'stop_loss_gap')
+                    continue
+                if bar['low'] <= stop:
+                    sell(asset, bar, stop, 'stop_loss')
+                    continue
+                activation = spec.get('trailing_activation')
+                distance = spec.get('trailing_distance')
+                previous_high = position.get('highest_price', position['price'])
+                if activation is not None and distance is not None and previous_high >= position['price'] * (1 + activation):
+                    trail = previous_high * (1 - distance)
+                    if bar['open'] <= trail:
+                        sell(asset, bar, bar['open'], 'trailing_stop_gap')
+                        continue
+                    if bar['low'] <= trail:
+                        sell(asset, bar, trail, 'trailing_stop')
+                        continue
+                target = spec.get('take_profit')
+                if target is not None:
+                    target_price = position['price'] * (1 + target)
+                    if bar['open'] >= target_price:
+                        sell(asset, bar, bar['open'], 'take_profit_gap')
+                        continue
+                    if bar['high'] >= target_price:
+                        sell(asset, bar, target_price, 'take_profit')
+                        continue
+            timed_out = spec['family'] == 'trend_breakout' and i - position['index'] >= spec['max_hold']
+            if halted or trend_exit or timed_out:
+                reason = 'risk_halt' if halted else ('time_limit' if timed_out else 'trend_exit')
+                sell(asset, bar, bar['open'], reason)
+                continue
+            position['highest_price'] = max(position.get('highest_price', position['price']), bar['high'])
         if not halted and i >= start_index:
             for asset, bar in current:
                 if max_positions is not None and len(positions) >= max_positions:
@@ -139,15 +187,33 @@ def simulate(bundle, spec, fee=0.008, min_commission=0, slippage=0.001,
                     slow = sum(b['close'] for b in previous[-spec['slow']:]) / spec['slow']
                     breakout = max(b['high'] for b in previous[-spec['breakout']-1:-1])
                     entry = fast > slow and previous[-1]['close'] > breakout
+                    if entry and 'min_volume_ratio' in spec:
+                        volume_window = previous[-20:]
+                        mean_volume = sum(b['volume'] for b in volume_window) / len(volume_window)
+                        entry = mean_volume > 0 and previous[-1]['volume'] >= mean_volume * spec['min_volume_ratio']
+                    if entry and ('min_atr_pct' in spec or 'max_atr_pct' in spec):
+                        sample = previous[-15:]
+                        ranges = []
+                        for j in range(1, len(sample)):
+                            high, low, prior = sample[j]['high'], sample[j]['low'], sample[j-1]['close']
+                            ranges.append(max(high - low, abs(high - prior), abs(low - prior)))
+                        atr_pct = (sum(ranges) / len(ranges)) / previous[-1]['close'] if ranges else 0
+                        entry = spec.get('min_atr_pct', 0) <= atr_pct <= spec.get('max_atr_pct', 1)
                 if entry:
                     buy(asset, bar, i)
         if spec['family'] == 'trend_breakout':
             for asset, bar in current:
                 position = positions.get(asset['id'])
-                if position:
+                if position and position['index'] == i:
                     stop = position['price'] * (1 - spec['stop_loss'])
                     if bar['low'] <= stop:
                         sell(asset, bar, min(stop, bar['open']), 'stop_loss')
+                        continue
+                    target = spec.get('take_profit')
+                    if target is not None and bar['high'] >= position['price'] * (1 + target):
+                        sell(asset, bar, position['price'] * (1 + target), 'take_profit')
+                        continue
+                    position['highest_price'] = max(position['highest_price'], bar['high'])
         equity = cash + sum(amount for _, amount in receivables) + sum(
             positions[a['id']]['quantity'] * b['close'] for a, b in current if a['id'] in positions)
         peak = max(peak, equity)

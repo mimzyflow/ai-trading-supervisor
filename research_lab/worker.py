@@ -14,6 +14,8 @@ from .governor import Registry
 from .research import cycle
 from .equity_paper import load as load_equity_paper, advance as advance_equity_paper, save as save_equity_paper, summary as equity_paper_summary
 from .engine import TEMPLATES
+from .v3_challengers import CHALLENGERS, evaluate as evaluate_v3_challengers
+from .freqai_shadow import status as freqai_shadow_status
 
 
 def read_json(path, maximum=8_000_000):
@@ -83,7 +85,9 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
     registry = Registry(state / 'registry.sqlite')
     status = {'schema_version': 1, 'generated_at': now.isoformat(), 'mode': 'RESEARCH_AND_PAPER_ONLY',
               'live_orders_supported': False, 'max_bots': 3, 'max_generation': 2,
-              'crypto_research': {}, 'equities': {'state': 'awaiting_broker_data', 'broker_orders_activated': False}, 'errors': []}
+              'crypto_research': {}, 'v3_challengers': {},
+              'freqai_shadow': freqai_shadow_status(),
+              'equities': {'state': 'awaiting_broker_data', 'broker_orders_activated': False}, 'errors': []}
     try:
         report_file = root / 'user_data/reports/latest.json'
         try:
@@ -115,6 +119,17 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
             except Exception as exc:
                 status['errors'].append('crypto_research_' + type(exc).__name__)
         status['crypto_research'] = marker.get('result', {'state': 'data_unavailable'})
+        v3_marker_file = state / 'last_v3_challengers.json'
+        v3_marker = read_daily_marker(v3_marker_file, 'v3_challengers', status['errors'])
+        if daily_cycle_required(v3_marker, registry, now):
+            try:
+                data_file = state / 'crypto_daily.json'
+                v3_bundle = validate(read_json(data_file), now)
+                v3_marker = {'day': now.date().isoformat(), 'result': evaluate_v3_challengers(v3_bundle, now)}
+                atomic_write(v3_marker_file, json.dumps(v3_marker, allow_nan=False))
+            except Exception as exc:
+                status['errors'].append('v3_challengers_' + type(exc).__name__)
+        status['v3_challengers'] = v3_marker.get('result', {'state': 'data_unavailable'})
         equities_file = state / 'equities.bundle.json'
         if equities_file.exists():
             try:
@@ -131,8 +146,21 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
                 # Forward paper decisions use only sessions present in the current bundle at this observation.
                 paper = advance_equity_paper(bundle, paper, TEMPLATES[0], now=now)
                 save_equity_paper(paper_file, paper)
+                shadows = {}
+                for name, spec in CHALLENGERS.items():
+                    shadow_file = state / ('equity_paper_v3_' + name + '.json')
+                    shadow = load_equity_paper(
+                        shadow_file, now,
+                        last_session=bundle['assets'][0]['bars'][-1]['close_at']
+                    )
+                    shadow = advance_equity_paper(
+                        bundle, shadow, spec, now=now,
+                        allocation=20, reserve_ratio=.30, risk_model=True
+                    )
+                    save_equity_paper(shadow_file, shadow)
+                    shadows[name] = equity_paper_summary(shadow)
                 status['equities'] = {**equity_marker['result'], 'paper': equity_paper_summary(paper),
-                                      'broker_orders_activated': False}
+                                      'v3_shadow': shadows, 'broker_orders_activated': False}
             except Exception as exc:
                 status['equities'] = {'state': 'invalid_broker_data', 'error_type': type(exc).__name__, 'broker_orders_activated': False}
         # Factory needs verifiable forward evidence; backtests never satisfy it.
