@@ -186,19 +186,20 @@ def simulate(bundle, spec, fee=0.008, min_commission=0, slippage=0.001,
                     fast = sum(b['close'] for b in previous[-spec['fast']:]) / spec['fast']
                     slow = sum(b['close'] for b in previous[-spec['slow']:]) / spec['slow']
                     breakout = max(b['high'] for b in previous[-spec['breakout']-1:-1])
-                    entry = fast > slow and previous[-1]['close'] > breakout
-                    if entry and 'min_volume_ratio' in spec:
-                        volume_window = previous[-20:]
-                        mean_volume = sum(b['volume'] for b in volume_window) / len(volume_window)
-                        entry = mean_volume > 0 and previous[-1]['volume'] >= mean_volume * spec['min_volume_ratio']
-                    if entry and ('min_atr_pct' in spec or 'max_atr_pct' in spec):
-                        sample = previous[-15:]
-                        ranges = []
-                        for j in range(1, len(sample)):
-                            high, low, prior = sample[j]['high'], sample[j]['low'], sample[j-1]['close']
-                            ranges.append(max(high - low, abs(high - prior), abs(low - prior)))
-                        atr_pct = (sum(ranges) / len(ranges)) / previous[-1]['close'] if ranges else 0
-                        entry = spec.get('min_atr_pct', 0) <= atr_pct <= spec.get('max_atr_pct', 1)
+                    sample = previous[-20:]
+                    ranges = []
+                    for j in range(1, len(sample)):
+                        high, low, prior = sample[j]['high'], sample[j]['low'], sample[j-1]['close']
+                        ranges.append(max(high - low, abs(high - prior), abs(low - prior)))
+                    atr_pct = (sum(ranges) / len(ranges)) / previous[-1]['close'] if ranges else 0
+                    mean_volume = sum(b['volume'] for b in sample) / len(sample)
+                    volume_ratio = previous[-1]['volume'] / max(mean_volume, 0.00000001)
+                    entry = (
+                        fast > slow
+                        and previous[-1]['close'] > breakout
+                        and spec.get('min_atr_pct', 0) <= atr_pct <= spec.get('max_atr_pct', 1)
+                        and volume_ratio >= spec.get('min_volume_ratio', 0)
+                    )
                 if entry:
                     buy(asset, bar, i)
         if spec['family'] == 'trend_breakout':

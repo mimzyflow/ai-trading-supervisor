@@ -31,10 +31,19 @@ def save(path, state):
 
 def _history(asset, i, n): return asset['bars'][max(0,i-n):i]
 def _entry(asset,i,spec):
-    h=_history(asset,i,max(spec['slow'],spec['breakout']+1))
-    if len(h)<max(spec['slow'],spec['breakout']+1): return False
+    h=_history(asset,i,max(spec['slow'],spec['breakout']+1,20))
+    if len(h)<max(spec['slow'],spec['breakout']+1,20): return False
     fast=sum(x['close'] for x in h[-spec['fast']:])/spec['fast']; slow=sum(x['close'] for x in h[-spec['slow']:])/spec['slow']
-    return fast>slow and h[-1]['close']>max(x['high'] for x in h[-spec['breakout']-1:-1])
+    sample=h[-20:]; ranges=[]
+    for j in range(1,len(sample)):
+        high,low,prior=sample[j]['high'],sample[j]['low'],sample[j-1]['close']
+        ranges.append(max(high-low,abs(high-prior),abs(low-prior)))
+    atr_pct=(sum(ranges)/len(ranges))/h[-1]['close'] if ranges else 0
+    mean_volume=sum(x['volume'] for x in sample)/len(sample)
+    volume_ratio=h[-1]['volume']/max(mean_volume,0.00000001)
+    return (fast>slow and h[-1]['close']>max(x['high'] for x in h[-spec['breakout']-1:-1])
+            and spec.get('min_atr_pct',0)<=atr_pct<=spec.get('max_atr_pct',1)
+            and volume_ratio>=spec.get('min_volume_ratio',0))
 def _exit(asset,i,spec):
     h=_history(asset,i,spec['slow']); return len(h)>=spec['slow'] and h[-1]['close']<sum(x['close'] for x in h[-spec['slow']:])/spec['slow']
 
