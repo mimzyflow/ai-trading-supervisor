@@ -280,3 +280,41 @@ malgré les variations du classement courant, validation native Freqtrade des
 V3 et coûts stressés explicites avant toute promotion. Une nouvelle liste
 courante ne doit pas être confondue avec les observations futures d'un ancien
 univers gelé. Les résultats historiques restent séparés et inéligibles.
+
+## Recalcul final sur l'univers renouvelé et preuve Oracle
+
+Le lot de cache `d54f1f33de58` a été activé à 15:43:34 UTC. Le worker
+recalcule V3 à 15:43:39 UTC pour le scope
+`a43ccbdc2adc41b543f25919f61bac08273c698c6679751964c4063de138f587`,
+empreinte données
+`c2a2b84a91c8b8de99ae7881823aecfbb90af921dd8895a1f211c192a7cef6f6`.
+Cet univers a remplacé UNI/XDG par LTC/ALGO. Les tableaux précédents restent
+les preuves du bundle d'avant ce renouvellement, sans réécriture.
+
+| V3 quotidien, univers renouvelé | Rendement | PF | Baisse maximale | Clôtures | Verdict |
+|---|---:|---:|---:|---:|---|
+| regime_momentum | -1.7321 % | 0.8484 | 5.5394 % | 28 | rejeté |
+| triple_barrier | -3.5098 % | 0.7296 | 6.9967 % | 27 | rejeté |
+| slow_breakout | -1.1227 % | 0.8427 | 5.7107 % | 14 | rejeté |
+
+À 15:47:55 UTC : les deux conteneurs sont sains, sans redémarrage ; timer
+actif, erreurs et alertes vides. Les sept epochs, sept events et zéro fenêtre
+consommée sont conservés à l'identique depuis la sauvegarde avant cache ; les
+quatre états financiers papier restent inchangés. Les empreintes de moteur
+sont identiques à celles du gel, donc cette correction de cache n'impose pas
+un nouveau gel prospectif. Deux preuves V3 antérieures sont archivées.
+
+Le rapport périodique suivant, observé à 15:46:41 UTC, a propagé ce recalcul
+dans Jarvis sans intervention manuelle. La copie Jarvis est identique au JSON
+producteur ; le connecteur renvoie les trois rendements ci-dessus, le témoin
+et les trois portefeuilles actions, tous à 100 USD avec zéro transaction.
+La crypto cumulée reste 95,8031 EUR, rendement -4,1969 %, seize clôtures ; la
+V2 seule compte huit clôtures et -1,5879 EUR réalisés. Aucun signal réel n'est
+activé. Le contrôle avec environnement complet réussit 178 tests ; Oracle
+réussit aussi la suite de 178 avec quatre dépendances optionnelles ignorées.
+
+Sauvegardes privées : `state-before-reports-20261008T151725Z` puis
+`state-before-cache-20261008T153801Z` dans `/home/ubuntu/trading-releases`.
+Rollback source du lot final : `previous-20261008T154323Z`.
+Archive code final SHA-256 :
+`9385df8a464c52bccdc63f032718b17b902ae1fa349bc573f1775d09d6a5e5da`.
