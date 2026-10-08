@@ -4,12 +4,13 @@ import json
 import os
 import subprocess
 import fcntl
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from supervisor.api import ReadOnlyAPI
 from supervisor.report import atomic_write
 from .collect import fetch_crypto_broad
-from .data import validate
+from .data import validate, stamp
 from .governor import Registry
 from .research import cycle
 from .equity_paper import load as load_equity_paper, advance as advance_equity_paper, save as save_equity_paper, summary as equity_paper_summary
@@ -50,6 +51,39 @@ def daily_cycle_required(marker, registry, now):
         return True
     row = registry.db.execute('SELECT status FROM epochs WHERE id=?', (epoch,)).fetchone() if epoch else None
     return row is not None and row['status'] == 'superseded'
+
+
+def v3_implementation_hash():
+    package = Path(__file__).resolve().parent
+    names = ['engine.py', 'v3_challengers.py', 'robustness.py', 'research.py']
+    return hashlib.sha256(b''.join((package / name).read_bytes() for name in names)).hexdigest()
+
+
+def replace_v3_marker(path, previous, current):
+    # Research computed with older code is evidence, never silently overwritten.
+    if previous:
+        payload = json.dumps(previous, ensure_ascii=False, sort_keys=True, allow_nan=False)
+        digest = hashlib.sha256(payload.encode()).hexdigest()
+        archived = path.parent / 'archive' / ('v3-' + digest + '.json')
+        if not archived.exists():
+            atomic_write(archived, payload)
+    atomic_write(path, json.dumps(current, ensure_ascii=False, allow_nan=False))
+
+
+def current_equity_bundle(state, now):
+    collection = read_json(state / 'equity_collection.json')
+    age = (now - stamp(collection['observed_at'])).total_seconds()
+    if collection.get('state') != 'current' or not 0 <= age <= 900:
+        raise ValueError('equity_collection_unavailable')
+    bundle = read_json(state / 'equities.bundle.json')
+    if stamp(bundle['observed_at']) != stamp(collection['observed_at']):
+        raise ValueError('equity_collection_bundle_mismatch')
+    bundle = validate(bundle, now)
+    # Weekends/holidays are allowed; a freshly downloaded obsolete chart is not.
+    market_age = (now - stamp(bundle['assets'][0]['bars'][-1]['close_at'])).total_seconds()
+    if not 0 <= market_age <= 96 * 3600:
+        raise ValueError('equity_market_data_stale')
+    return bundle
 
 
 def verified_stop_simulation(decision, runner=subprocess.run, api_factory=ReadOnlyAPI):
@@ -121,19 +155,24 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
         status['crypto_research'] = marker.get('result', {'state': 'data_unavailable'})
         v3_marker_file = state / 'last_v3_challengers.json'
         v3_marker = read_daily_marker(v3_marker_file, 'v3_challengers', status['errors'])
-        if daily_cycle_required(v3_marker, registry, now):
+        v3_hash = v3_implementation_hash()
+        if daily_cycle_required(v3_marker, registry, now) or v3_marker.get('implementation_sha256') != v3_hash:
             try:
                 data_file = state / 'crypto_daily.json'
                 v3_bundle = validate(read_json(data_file), now)
-                v3_marker = {'day': now.date().isoformat(), 'result': evaluate_v3_challengers(v3_bundle, now)}
-                atomic_write(v3_marker_file, json.dumps(v3_marker, allow_nan=False))
+                updated_marker = {'day': now.date().isoformat(), 'implementation_sha256': v3_hash,
+                                  'result': evaluate_v3_challengers(v3_bundle, now)}
+                replace_v3_marker(v3_marker_file, v3_marker, updated_marker)
+                v3_marker = updated_marker
             except Exception as exc:
                 status['errors'].append('v3_challengers_' + type(exc).__name__)
         status['v3_challengers'] = v3_marker.get('result', {'state': 'data_unavailable'})
+        if v3_marker.get('implementation_sha256') != v3_hash:
+            status['v3_challengers'] = {'state': 'implementation_changed_recalculation_required'}
         equities_file = state / 'equities.bundle.json'
         if equities_file.exists():
             try:
-                bundle = validate(read_json(equities_file), now)
+                bundle = current_equity_bundle(state, now)
                 if any(a['asset_class'] not in {'stock', 'etf'} for a in bundle['assets']):
                     raise ValueError('equities_data_scope')
                 equity_marker_file = state / 'last_equities.json'
@@ -163,6 +202,7 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
                                       'v3_shadow': shadows, 'broker_orders_activated': False}
             except Exception as exc:
                 status['equities'] = {'state': 'invalid_broker_data', 'error_type': type(exc).__name__, 'broker_orders_activated': False}
+                status['errors'].append('equity_collection_' + type(exc).__name__)
         # Factory needs verifiable forward evidence; backtests never satisfy it.
         evidence_file = state / 'forward_growth.json'
         if evidence_file.exists():

@@ -92,7 +92,7 @@ class SupervisionTests(unittest.TestCase):
         self.assertEqual(result["estimated_stop_risk_eur"], 0.8)
         self.assertTrue(healthcheck.check(result))
         self.assertEqual(result["publication"]["state"], "not_configured")
-        self.assertFalse(result["healthy"])
+        self.assertTrue(result["healthy"])
 
     def test_missing_database_is_not_created_or_reported_zero(self):
         self.db.unlink()

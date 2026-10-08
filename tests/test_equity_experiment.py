@@ -119,18 +119,20 @@ class EquityExperimentTests(unittest.TestCase):
         bars[200]['volume'] = 1_000_000
         bars[199]['volume'] = 1
         execution = causal_execution_bundle(data)
-        self.assertEqual(execution['assets'][0]['bars'][200]['volume'], 1)
-        self.assertEqual(execution['assets'][0]['bars'][201]['volume'], 1_000_000)
-        self.assertEqual(execution['assets'][0]['bars'][0]['volume'], 1)
-        for original, transformed in zip(bars, execution['assets'][0]['bars']):
-            self.assertEqual({k: v for k, v in original.items() if k != 'volume'},
-                             {k: v for k, v in transformed.items() if k != 'volume'})
+        self.assertEqual(execution, data)
+        self.assertIsNot(execution, data)
         result = simulate(execution, {'family': 'buy_hold'}, start_index=200,
                           fee=0.001, min_commission=1, slippage=0.001, risk_control=False)
         self.assertEqual(result['closed_trades'], 0)
-        future = copy.deepcopy(data); future['assets'][0]['bars'][201]['volume'] = 500
-        self.assertEqual(causal_execution_bundle(future)['assets'][0]['bars'][:202],
-                         execution['assets'][0]['bars'][:202])
+        # At session 201, the known session-200 volume allows a fill. This
+        # proves the wrapper has not introduced a second lag.
+        next_session = simulate(execution, {'family': 'buy_hold'}, start_index=201,
+                                fee=0.001, min_commission=1, slippage=0.001, risk_control=False)
+        self.assertEqual(next_session['closed_trades'], 1)
+        future = copy.deepcopy(data); future['assets'][0]['bars'][201]['volume'] = 1
+        next_future = simulate(causal_execution_bundle(future), {'family': 'buy_hold'}, start_index=201,
+                               fee=0.001, min_commission=1, slippage=0.001, risk_control=False)
+        self.assertEqual(next_future['trades'], next_session['trades'])
 
     def test_real_engine_costs_and_integer_lot_benchmarks(self):
         data = historical_bundle(); execution = causal_execution_bundle(data)

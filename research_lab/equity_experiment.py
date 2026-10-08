@@ -82,13 +82,9 @@ def equity_data(bundle, now):
 
 
 def causal_execution_bundle(data):
-    execution = deepcopy(data)
-    for original, asset in zip(data['assets'], execution['assets']):
-        for index, bar in enumerate(asset['bars']):
-            # The first bar has no known predecessor. Sentinel 1 cannot fill an
-            # integer lot under the 1% cap; all runs also start after 200 warmup bars.
-            bar['volume'] = original['bars'][index - 1]['volume'] if index else 1.0
-    return execution
+    # The common engine now uses the previous closed session for liquidity.
+    # Keep actual volumes here so signal filters and fills each lag once.
+    return deepcopy(data)
 
 
 def windows(data):
@@ -164,7 +160,8 @@ def benchmark_fills(data, scenario):
         lot = float(asset.get('lot_size', 1))
         quantity = math.floor(max(0, 20 - scenario['min_commission']) /
                               (price * (1 + scenario['fee'])) / lot) * lot
-        quantity = min(quantity, math.floor(bar['volume'] * 0.01 / lot) * lot)
+        previous_volume = asset['bars'][WARMUP - 1]['volume']
+        quantity = min(quantity, math.floor(previous_volume * 0.01 / lot) * lot)
         notional = quantity * price
         cost = notional + max(scenario['min_commission'], notional * scenario['fee']) if quantity else 0
         if cost > 20 + 1e-8:

@@ -84,15 +84,17 @@ class DataAndExecutionTests(unittest.TestCase):
         self.assertEqual(len(result['curve']), 50)
 
     def test_split_does_not_create_or_destroy_wealth(self):
-        data = bundle(prices=[10,5,5,5], asset_class='stock')
-        data['assets'][0]['bars'][1]['split_ratio'] = 2
+        # Session 0 supplies known liquidity; the position exists before split.
+        data = bundle(prices=[10,10,5,5,5], asset_class='stock')
+        data['assets'][0]['bars'][2]['split_ratio'] = 2
         result = simulate(data, {'family': 'buy_hold'}, fee=0, slippage=0, risk_control=False)
         self.assertEqual(result['equity'], 100)
         self.assertEqual(result['trades'][0]['quantity'], 4)
 
     def test_dividend_receivable_does_not_become_spendable_before_payment(self):
-        data = bundle(prices=[10,9,9,9], asset_class='etf')
-        data['assets'][0]['bars'][1].update(dividend_per_share=1, dividend_paid_at='2023-01-01T00:00:00+00:00')
+        # Buy after liquidity warmup and before the dividend entitlement date.
+        data = bundle(prices=[10,10,9,9,9], asset_class='etf')
+        data['assets'][0]['bars'][2].update(dividend_per_share=1, dividend_paid_at='2023-01-01T00:00:00+00:00')
         result = simulate(data, {'family': 'buy_hold'}, fee=0, slippage=0, close_at_end=False, risk_control=False)
         self.assertEqual(result['cash'], 80)
         self.assertEqual(result['receivables'], 2)

@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import re
 import sqlite3
 import tempfile
 from datetime import datetime, timezone
@@ -58,6 +59,45 @@ def read_publication():
         return {"state": "not_configured" if not os.environ.get("GITHUB_STATUS_TOKEN", "").strip() else "pending"}
 
 
+def metric(value, count=False):
+    try:
+        value = number(value)
+        if count and (value < 0 or not value.is_integer()):
+            return None
+        return int(value) if count else round(value, 4)
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+def status_code(value, fallback='unknown'):
+    return value if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_:-]{1,80}', value) else fallback
+
+
+def paper_metrics(value):
+    if not isinstance(value, dict) or value.get('mode') != 'BROKERLESS_PAPER' or value.get('real_money_eligible') is not False:
+        return {'state': 'unavailable'}
+    result = {'state': status_code(value.get('state')), 'mode': 'BROKERLESS_PAPER',
+              'currency': 'USD', 'real_money_eligible': False}
+    for key in ['equity', 'return_pct', 'cash', 'profit_factor', 'max_drawdown_pct', 'win_rate_pct', 'expectancy']:
+        result[key] = metric(value.get(key))
+    for key in ['open_positions', 'closed_trades', 'wins', 'losses']:
+        result[key] = metric(value.get(key), count=True)
+    try:
+        parsed = datetime.fromisoformat(value['last_session'].replace('Z', '+00:00'))
+        result['last_session'] = parsed.isoformat() if parsed.tzinfo else None
+    except (KeyError, ValueError, TypeError, AttributeError):
+        result['last_session'] = None
+    session = result.get('last_session')
+    market_age = (utcnow() - datetime.fromisoformat(session)).total_seconds() if session else None
+    if value.get('state') not in {'paper_active', 'paper_halted'} or market_age is None or not 0 <= market_age <= 96 * 3600:
+        for key in ['equity', 'return_pct', 'cash', 'profit_factor', 'max_drawdown_pct', 'win_rate_pct', 'expectancy', 'open_positions', 'closed_trades', 'wins', 'losses']:
+            result[key] = None
+    result['halt_reason'] = status_code(value.get('halt_reason'), '')
+    result['blocked_reason'] = status_code(value.get('blocked_reason'), '')
+    result['execution_revision'] = status_code(value.get('execution_revision'), '')
+    return result
+
+
 def read_research():
     path = REPORTS / 'autonomy.json'
     try:
@@ -66,7 +106,7 @@ def read_research():
         raw = json.loads(path.read_text())
         if not isinstance(raw, dict) or not isinstance(raw.get('generated_at'), str):
             raise ValueError('invalid_research_status')
-        if any(not isinstance(raw.get(key, {}), dict) for key in ['risk', 'crypto_research', 'equities']):
+        if any(not isinstance(raw.get(key, {}), dict) for key in ['risk', 'crypto_research', 'equities', 'v3_challengers', 'freqai_shadow']):
             raise ValueError('invalid_research_sections')
         observed = datetime.fromisoformat(raw['generated_at'].replace('Z', '+00:00'))
         if observed.tzinfo is None:
@@ -74,23 +114,38 @@ def read_research():
         age = (utcnow() - observed).total_seconds()
         if raw.get('schema_version') != 1 or not 0 <= age <= 900:
             return {'state': 'stale'}
-        shadows = {}
-        for name, value in list(raw.get('equities', {}).get('v3_shadow', {}).items())[:3]:
-            if isinstance(value, dict):
-                shadows[str(name)[:40]] = {
-                    'equity': value.get('equity'),
-                    'return_pct': value.get('return_pct'),
-                    'open_positions': value.get('open_positions'),
-                    'closed_trades': value.get('closed_trades'),
-                    'max_drawdown_pct': value.get('max_drawdown_pct'),
-                }
+        equities = raw.get('equities', {})
+        shadows = equities.get('v3_shadow', {})
+        shadows = {name: paper_metrics(value) for name, value in list(shadows.items())[:3]
+                   if name in {'regime_momentum', 'triple_barrier', 'slow_breakout'}} if isinstance(shadows, dict) else {}
+        v3 = raw.get('v3_challengers', {})
+        challengers = v3.get('challengers', {})
+        results = {}
+        if isinstance(challengers, dict):
+            for name, value in list(challengers.items())[:3]:
+                if name not in {'regime_momentum', 'triple_barrier', 'slow_breakout'} or not isinstance(value, dict):
+                    continue
+                result, gate = value.get('result', {}), value.get('gate', {})
+                if not isinstance(result, dict) or not isinstance(gate, dict):
+                    continue
+                reasons = gate.get('reasons', [])
+                results[name] = {key: metric(result.get(key), count=key == 'closed_trades')
+                                 for key in ['return_pct', 'profit_factor', 'max_drawdown_pct', 'closed_trades']}
+                results[name].update(state=status_code(gate.get('state')),
+                                     reasons=[status_code(x) for x in reasons[:12]] if isinstance(reasons, list) else [])
+        errors = raw.get('errors', [])
         return {'state': 'current', 'observed_at': raw['generated_at'],
                 'risk': str(raw.get('risk', {}).get('state', 'unknown'))[:48],
                 'crypto': str(raw.get('crypto_research', {}).get('state', 'unknown'))[:64],
                 'v3_crypto': str(raw.get('v3_challengers', {}).get('state', 'unknown'))[:64],
                 'freqai_shadow': str(raw.get('freqai_shadow', {}).get('state', 'unknown'))[:64],
                 'equities': str(raw.get('equities', {}).get('state', 'unknown'))[:64],
-                'equity_v3': shadows,
+                'equity_paper': paper_metrics(equities.get('paper')),
+                'equity_v3': shadows, 'v3_results': results,
+                'v3_observed_at': str(v3.get('observed_at') or '')[:64],
+                'sessions': metric(equities.get('sessions'), count=True),
+                'required': metric(equities.get('required'), count=True),
+                'errors': [status_code(x) for x in errors[:10]] if isinstance(errors, list) else [],
                 'broker_orders_activated': False, 'max_bots': 3, 'real_money_eligible': False}
     except (OSError, ValueError, KeyError, TypeError):
         return {'state': 'unavailable', 'broker_orders_activated': False}
@@ -204,8 +259,10 @@ def collect(api=None):
         data["alerts"].append("Télémétrie du moteur indisponible ou invalide : état non vérifié.")
     if data["log_age_minutes"] is None or data["log_age_minutes"] > 20:
         data["alerts"].append("Journal Freqtrade absent ou ancien : vérifier le moteur.")
-    if data["publication"].get("state") in {"not_configured", "failed", "report_failed"}:
+    if data["publication"].get("state") in {"failed", "report_failed"}:
         data["alerts"].append("Publication GitHub : " + str(data["publication"]["state"]) + ". Les rapports locaux restent la source de télémétrie.")
+    if data['research'].get('errors'):
+        data['alerts'].append('Recherche : ' + ', '.join(data['research']['errors']))
     data["healthy"] = data["api_ok"] and data["database_ok"] and data["configuration_safe"] and not data["alerts"]
     if data["api_ok"] and data["database_ok"] and data["total_trades"] == 0 and data["state"] == "active":
         data["activity_note"] = "Bot actif, en attente d'un signal d'entrée conforme à la stratégie."
@@ -241,6 +298,33 @@ def render(data):
               '- Recherche crypto : ' + str(research.get('crypto', 'indisponible')),
               '- Actions/ETF : ' + str(research.get('equities', 'indisponible')),
               '- Ordres courtier activés : non. Réel éligible : non.']
+    paper = research.get('equity_paper', {})
+    lines += ['', '### Actions prospectives V2 (USD fictifs)',
+              '- État : ' + str(paper.get('state', 'unavailable')),
+              '- Dernière séance traitée : ' + str(paper.get('last_session') or 'indisponible')]
+    for label, key in [('Valeur USD', 'equity'), ('Rendement %', 'return_pct'), ('Cash USD', 'cash'),
+                       ('Positions ouvertes', 'open_positions'), ('Trades clôturés', 'closed_trades'),
+                       ('Baisse maximale %', 'max_drawdown_pct')]:
+        lines.append('- ' + label + ' : ' + display(paper.get(key)))
+    if paper.get('closed_trades') == 0:
+        lines.append('- Zéro transaction : aucune efficacité démontrée.')
+    lines += ['', '### Crypto V3 : recherche historique',
+              '- Calcul source : ' + str(research.get('v3_observed_at') or 'indisponible'),
+              '- Décision : ' + str(research.get('v3_crypto', 'unavailable')),
+              '| Variante | Rendement % | Profit factor | Baisse max % | Clôtures | Décision |',
+              '| --- | ---: | ---: | ---: | ---: | --- |']
+    for name, result in research.get('v3_results', {}).items():
+        lines.append('| ' + name + ' | ' + ' | '.join(display(result.get(k)) for k in ['return_pct', 'profit_factor', 'max_drawdown_pct', 'closed_trades']) + ' | ' + str(result.get('state', 'unknown')) + ' |')
+    for name, result in research.get('v3_results', {}).items():
+        if result.get('reasons'):
+            lines.append('\nRefus ' + name + ' : ' + ', '.join(result['reasons']) + '.\n')
+    lines += ['', '### Actions V3 : portefeuilles prospectifs séparés']
+    for name, shadow in research.get('equity_v3', {}).items():
+        lines.append('- ' + name + ' : ' + display(shadow.get('equity')) + ' USD, ' + display(shadow.get('closed_trades')) + ' clôture(s), état ' + str(shadow.get('state', 'unknown')) + '.')
+    if research.get('sessions') is not None:
+        lines.append('- Historique actions : ' + display(research['sessions']) + ' séances / ' + display(research.get('required')) + ' requises.')
+    if research.get('errors'):
+        lines.append('- Erreurs worker : ' + ', '.join(research['errors']))
     lines += ["", "> Supervision en lecture seule. Les résultats simulés ne constituent pas une validation de rentabilité."]
     return "\n".join(lines) + "\n"
 

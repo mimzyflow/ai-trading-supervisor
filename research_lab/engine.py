@@ -93,11 +93,16 @@ def simulate(bundle, spec, fee=0.008, min_commission=0, slippage=0.001,
     def buy(asset, bar, index):
         nonlocal cash, entry_attempts
         entry_attempts += 1
+        if index == 0:
+            # An opening order cannot know this session's completed volume.
+            # Keep the first session as liquidity warmup for every market.
+            return
         price = finite(bar['open']) * (1 + slippage)
         lot = finite(asset.get('lot_size', 1), 0.00000001)
         budget = min(allocation, cash)
         quantity = math.floor(max(0, (budget - min_commission)) / (price * (1 + fee)) / lot) * lot
-        quantity = min(quantity, math.floor(bar['volume'] * 0.01 / lot) * lot)
+        previous_volume = asset['bars'][index - 1]['volume']
+        quantity = min(quantity, math.floor(previous_volume * 0.01 / lot) * lot)
         if quantity <= 0:
             return
         value = quantity * price
@@ -141,6 +146,14 @@ def simulate(bundle, spec, fee=0.008, min_commission=0, slippage=0.001,
             trend_exit = False
             if spec['family'] == 'trend_breakout' and len(previous) >= spec['slow']:
                 trend_exit = previous[-1]['close'] < sum(b['close'] for b in previous[-spec['slow']:]) / spec['slow']
+            timed_out = spec['family'] == 'trend_breakout' and i - position['index'] >= spec['max_hold']
+            # These exits are due at the opening price. The later candle path
+            # cannot replace them with an intraday stop or profit barrier.
+            if halted or trend_exit or timed_out:
+                reason = 'risk_halt' if halted else ('time_limit' if timed_out else 'trend_exit')
+                sell(asset, bar, bar['open'], reason)
+                continue
+            if spec['family'] == 'trend_breakout' and len(previous) >= spec['slow']:
                 stop = position['price'] * (1 - spec['stop_loss'])
                 if bar['open'] <= stop:
                     sell(asset, bar, bar['open'], 'stop_loss_gap')
@@ -168,19 +181,14 @@ def simulate(bundle, spec, fee=0.008, min_commission=0, slippage=0.001,
                     if bar['high'] >= target_price:
                         sell(asset, bar, target_price, 'take_profit')
                         continue
-            timed_out = spec['family'] == 'trend_breakout' and i - position['index'] >= spec['max_hold']
-            if halted or trend_exit or timed_out:
-                reason = 'risk_halt' if halted else ('time_limit' if timed_out else 'trend_exit')
-                sell(asset, bar, bar['open'], reason)
-                continue
             position['highest_price'] = max(position.get('highest_price', position['price']), bar['high'])
         if not halted and i >= start_index:
             for asset, bar in current:
                 if max_positions is not None and len(positions) >= max_positions:
                     break
-                if asset['id'] in positions or bar['volume'] <= 0:
+                if asset['id'] in positions or i == 0 or asset['bars'][i - 1]['volume'] <= 0:
                     continue
-                entry = spec['family'] == 'buy_hold' and i == start_index
+                entry = spec['family'] == 'buy_hold' and i == max(start_index, 1)
                 if spec['family'] == 'trend_breakout' and i >= max(spec['slow'], spec['breakout'] + 1):
                     previous = signal_history(asset, i)
                     fast = sum(b['close'] for b in previous[-spec['fast']:]) / spec['fast']
