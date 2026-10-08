@@ -53,4 +53,18 @@ Les corrections de causalité et de risque sont détaillées dans
 [l'audit](TRADING_AUDIT_2026-10-08.md). Un changement de moteur ne rend pas les
 anciens plans compatibles : une [révision explicite](RESEARCH_RESUME.md) conserve
 les preuves et fixe un nouveau gel prospectif. Les anciens résultats V3 sont
-archivés par empreinte avant recalcul. Aucun ordre réel n'est activé.
+archivés par empreinte avant recalcul. Leur cache doit correspondre au code,
+aux actifs dans leur ordre d'exécution et à toutes les données simulées ;
+une simple date de collecte rafraîchie ne modifie pas cette empreinte. Un
+changement des données invalide les chiffres précédents jusqu'au succès du
+recalcul. Aucun ordre réel n'est activé.
+
+## Supervision configurée
+
+Une revue Codex quotidienne à 9 h, en lecture seule, est attachée à la
+conversation (`surveillance-bots-crypto-et-actions`). Elle utilise le
+connecteur `trading_status`, compare la fraîcheur et les changements, et
+présente les points nécessitant une décision humaine. Son premier passage
+planifié reste à vérifier ; il dépend de la disponibilité du poste Codex.
+La collecte, les rapports et le contrôle de risque sur Oracle poursuivent
+leur cadence propre toutes les cinq minutes, même sans ouverture du Mac.

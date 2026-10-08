@@ -72,6 +72,139 @@ Il ne contient ni `exit_code`, ni archive de résultat. Les scripts de
 lookahead/recursive sont présents ; aucune preuve de leur exécution réussie
 n'a été retrouvée dans ces artefacts locaux.
 
+### Recalcul distinct avec le moteur corrigé
+
+Le diagnostic privé `.runtime/audit-20261008/v3-corrected.json`, calculé le
+8 octobre à 15:15:49 UTC, utilise les 12 actifs crypto et les 720 séances du
+bundle Oracle, du 19 octobre 2024 au 8 octobre 2026. Il est conservé séparément
+des résultats ci-dessus : aucun ancien chiffre ni artefact n'a été remplacé.
+Les paramètres des challengers sont inchangés.
+
+| Challenger quotidien, moteur corrigé | Rendement global | PF | Baisse maximale | Clôtures | Verdict |
+|---|---:|---:|---:|---:|---|
+| regime_momentum | -3,0073 % | 0,7693 | 5,6298 % | 29 | rejeté |
+| triple_barrier | -4,0729 % | 0,6006 | 5,2722 % | 20 | rejeté |
+| slow_breakout | -1,7791 % | 0,7847 | 5,8648 % | 16 | rejeté |
+
+Les trois variants restent rejetés : gains nets négatifs, PF inférieur à 1,20,
+moins de 30 clôtures et au moins une fenêtre chronologique défavorable. Le
+seuil d'arrêt de 5 % peut être dépassé par les gaps et les frais ; ce tableau
+ne prétend pas garantir une perte maximale. Ce recalcul quotidien reste un
+diagnostic rétrospectif crypto, distinct des actions et des classes Freqtrade
+1h/4h. Il ne constitue aucun nouveau test futur.
+
+Empreinte SHA-256 du fichier corrigé :
+`098d8331d87ae710c2587d669ae1927e69ea9bea90e80c6432c283cf1ca4e488`.
+Le JSON conserve également les empreintes du bundle et de l'implémentation.
+
+## Actions : archives vérifiées et portefeuille prospectif
+
+Les 72 résultats du 4 octobre ont été relus dans les archives privées du projet
+`improvements-20261004/trading/research_results/equity-experiment-20261004-v1/`.
+Les 72 identifiants fenêtre/variante/coûts sont distincts ; les six empreintes
+des sorties, l'empreinte du plan et celles du code d'origine correspondent.
+Le bundle contient 1 342 séances par titre, SOFI et U, du 1er juin 2021 au
+2 octobre 2026. Le protocole était fixé au commit `5c9d69d` avant calcul.
+
+Ces 72 calculs regroupent quatre stratégies, deux références cash/achat-
+conservation, quatre fenêtres et trois scénarios de coûts. Ils ne correspondent
+donc pas à 72 stratégies indépendantes. Budget fictif 100 USD, allocation
+maximale 20 USD par titre, actions entières ; scénario conservateur à 0,1 %
+par côté, minimum 1 USD par ordre et glissement 0,1 % par côté.
+
+| Fenêtre | Rendement des quatre stratégies, scénario conservateur | Clôtures par stratégie | Achat-conservation |
+|---|---:|---:|---:|
+| 2023 | -5,1659 à -0,6928 % | 1 ou 2 | +19,142 % |
+| 2024 | +3,7550 % | 1 | +3,665 % |
+| 2025 | -6,7396 à -5,3014 % | 2 | +9,139 % |
+| 2026 jusqu'au 2 octobre | 0 % | 0 | 0 % |
+
+Aucun candidat robuste n'est retenu. Le gain 2024 repose sur une seule clôture.
+En 2026, les tentatives d'entrée ne produisent aucun achat faisable sous le
+plafond de 20 USD : le zéro indique du cash inutilisé. Le scénario sans
+commission est une hypothèse séparée et ne réhabilite pas les variantes.
+Les résultats complets restent dans
+[le rapport historique](EQUITY_SIMULATION_RESULTS_2026-10-04.md), sans recalcul
+dans son ancien dossier. Ce laboratoire à deux titres ne remplace pas les
+observations du portefeuille prospectif à huit titres déployé depuis octobre.
+
+### Corrections du portefeuille papier livrées
+
+[equity_paper.py](../research_lab/equity_paper.py) conserve les états, capital et
+transactions existants. Il ajoute `execution_revision=paper_engine_v2` et une
+date d'activation ; les métriques cumulées continuent d'inclure l'historique
+antérieur à cette révision.
+
+- Les stops protègent maintenant V2 comme V3. Un gap sous le stop utilise le
+  prix d'ouverture ; un stop intraday passe avant un objectif de gain lorsque
+  la séquence high/low est inconnue. Les coûts restent appliqués à la sortie.
+- Une baisse portefeuille de 5 % déclenche un halt persistant et la liquidation
+  au premier prix modélisé disponible : ouverture pour un dépassement connu à
+  l'ouverture, clôture pour un dépassement constaté à la clôture. Les frais de
+  chaque nouvel achat sont contrôlés avant d'autoriser le suivant. Un redémarrage
+  ou une récupération ultérieure n'efface pas le halt ni la perte historique.
+- `held_sessions` et `held_as_of` remplacent l'index glissant du bundle pour la
+  durée maximale. L'âge d'une ancienne position est récupéré seulement si sa
+  date d'entrée et la dernière séance traitée sont connues. Sinon,
+  `paper_blocked/age_history_unavailable` conserve le portefeuille sans inventer
+  une durée ni réinitialiser le capital.
+- Les filtres V3 volume et ATR utilisent uniquement les séances précédemment
+  clôturées, comme le moteur quotidien corrigé. Aucun seuil de stratégie n'est
+  modifié selon les performances observées.
+
+[equity_live.py](../research_lab/equity_live.py) conserve les dates et codes des
+splits/dividendes annoncés, dans une liste bornée ; des métadonnées malformées
+sont refusées. Une opération sur titre dans les nouvelles séances à traiter
+produit `paper_blocked/corporate_action_requires_review` avant toute modification
+des positions, du cash, des trades ou de `last_session`. Aucun ratio, prix brut
+ou paiement de dividende n'est inventé. Un événement ancien n'est pas rejoué ;
+un événement futur ne bloque pas les séances antérieures à sa date.
+`corporate_actions_verified=false` et `price_basis_verified=false` restent
+explicites. La suppression du blocage exige une entrée ne contenant plus
+l'événement problématique dans la période à traiter, sans reset du portefeuille.
+
+Les tests couvrent gaps, priorité du stop, liquidation/halt après redémarrage,
+limite de durée sur fenêtre roulante, conservation des anciens trades, frais
+cumulés, refus des événements nouveaux/malformés et causalité des filtres.
+Le dernier lot ciblé de 36 tests actions/V3/causalité/livraison a réussi.
+
+### Collecte, fraîcheur et limites d'exécution
+
+Le collecteur écrit un statut séparé `research_state/equity_collection.json`.
+En cas d'échec, il garde l'ancien bundle comme preuve et le marque inutilisable
+pour de nouvelles décisions. Le service poursuit la surveillance crypto
+indépendante. Avant d'avancer le portefeuille actions, le worker exige une
+collecte réussie vieille de 15 minutes au plus, la même date d'observation dans
+le statut et le bundle, et une dernière séance close vieille de 96 heures au
+plus. Cette marge tolère les week-ends et jours fériés ordinaires ; elle ne
+constitue pas un calendrier officiel. Les rapports cachent les métriques
+financières des états bloqués ou périmés et conservent le motif du blocage.
+
+Le papier utilise un signal sur le passé clos puis un achat modélisé à la
+clôture de la séance traitée. Ses stops/barrières utilisent des hypothèses sur
+la bougie quotidienne. Ce modèle à clôture est déclaré dans `execution_model` ;
+il diffère du moteur historique à ouverture suivante et des classes natives
+Freqtrade. Une observation après clôture ne prouve pas une exécution courtier
+possible au prix de cette clôture.
+
+Yahoo reste la seule source de prix. Les opérations sur titres ne sont pas
+recoupées indépendamment, les horaires live sont modélisés à 16h New York et
+les suspensions ou séances manquantes propres à un titre ne sont pas certifiées.
+L'univers contemporain conserve un biais de survie. Frais, glissement et
+liquidité restent des hypothèses ; change, fiscalité et paiements réels ne sont
+pas simulés. Les résultats historiques ne satisfont pas les 126 séances futures
+du protocole de recherche et n'autorisent aucun ordre réel.
+
+### Conservation au déploiement
+
+Le lot correctif `ad6a836` a été activé sur Oracle. La reprise explicite de la
+recherche a ensuite gelé le moteur corrigé sans antidater le nouveau plan.
+La vérification avant/après a conservé les cinq plans historiques et leurs
+fenêtres consommées, ainsi que les quatre états papier préexistants. Les données
+financières n'ont pas été réinitialisées ni les anciens résultats attribués à
+la nouvelle révision. Les preuves de cette vérification sont distinctes des
+recalculs rétrospectifs ci-dessus.
+
 ## Deux corrections de causalité
 
 Les anomalies suivantes ont été reproduites avec des données synthétiques sur
@@ -127,3 +260,23 @@ la validation complète et la vérification de déploiement.
 Aucun paramètre de stratégie n'a été retouché sur les résultats observés. Aucun
 résultat historique n'a été recalculé dans son ancien dossier ni écrasé par ce
 correctif. Les clés, dépôts et ordres réels restent hors périmètre.
+
+## Cache V3 lié aux véritables données
+
+La recette après déploiement a relevé un second défaut : le cache quotidien
+V3 suivait la date et le code, mais pas les données. Le classement public
+avait remplacé deux actifs le même jour, tandis que les résultats d'avant
+ce remplacement restaient affichés. Le cache exige maintenant l'empreinte
+canonique du bundle simulé, en conservant l'ordre des actifs qui influence
+l'allocation de cash, et l'identifiant de scope. Le changement d'une barre,
+de l'univers ou de son ordre impose un recalcul. Changer seulement la date
+de collecte ou les métadonnées de découverte ne suffit pas à le déclencher.
+L'ancienne preuve est archivée avant le calcul ; un échec masque les anciens
+chiffres plutôt que de les attribuer aux nouvelles données. Cette correction
+ne change ni les signaux ni les gels prospectifs enregistrés.
+
+Priorités de recherche restantes : univers prospectif fixé au gel et conservé
+malgré les variations du classement courant, validation native Freqtrade des
+V3 et coûts stressés explicites avant toute promotion. Une nouvelle liste
+courante ne doit pas être confondue avec les observations futures d'un ancien
+univers gelé. Les résultats historiques restent séparés et inéligibles.

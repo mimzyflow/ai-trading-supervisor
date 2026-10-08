@@ -10,9 +10,9 @@ from pathlib import Path
 from supervisor.api import ReadOnlyAPI
 from supervisor.report import atomic_write
 from .collect import fetch_crypto_broad
-from .data import validate, stamp
+from .data import validate, stamp, canonical_hash
 from .governor import Registry
-from .research import cycle
+from .research import cycle, research_scope
 from .equity_paper import load as load_equity_paper, advance as advance_equity_paper, save as save_equity_paper, summary as equity_paper_summary
 from .engine import TEMPLATES
 from .v3_challengers import CHALLENGERS, evaluate as evaluate_v3_challengers
@@ -59,14 +59,26 @@ def v3_implementation_hash():
     return hashlib.sha256(b''.join((package / name).read_bytes() for name in names)).hexdigest()
 
 
-def replace_v3_marker(path, previous, current):
-    # Research computed with older code is evidence, never silently overwritten.
+def v3_data_signature(bundle):
+    # These are the simulator's inputs, including asset order (cash allocation
+    # depends on it). Refreshed discovery/provenance metadata is not market data.
+    return {'data_sha256': canonical_hash({key: bundle[key]
+                                          for key in ['schema_version', 'currency', 'assets']}),
+            'scope': research_scope(bundle)}
+
+
+def archive_v3_marker(path, previous):
+    # Research computed with older code/data is evidence, never overwritten.
     if previous:
         payload = json.dumps(previous, ensure_ascii=False, sort_keys=True, allow_nan=False)
         digest = hashlib.sha256(payload.encode()).hexdigest()
         archived = path.parent / 'archive' / ('v3-' + digest + '.json')
         if not archived.exists():
             atomic_write(archived, payload)
+
+
+def replace_v3_marker(path, previous, current):
+    archive_v3_marker(path, previous)
     atomic_write(path, json.dumps(current, ensure_ascii=False, allow_nan=False))
 
 
@@ -156,19 +168,30 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
         v3_marker_file = state / 'last_v3_challengers.json'
         v3_marker = read_daily_marker(v3_marker_file, 'v3_challengers', status['errors'])
         v3_hash = v3_implementation_hash()
-        if daily_cycle_required(v3_marker, registry, now) or v3_marker.get('implementation_sha256') != v3_hash:
-            try:
-                data_file = state / 'crypto_daily.json'
-                v3_bundle = validate(read_json(data_file), now)
+        v3_signature, v3_cache_matches = None, False
+        try:
+            data_file = state / 'crypto_daily.json'
+            v3_bundle = validate(read_json(data_file), now)
+            v3_signature = v3_data_signature(v3_bundle)
+            v3_cache_matches = (v3_marker.get('implementation_sha256') == v3_hash
+                                and all(v3_marker.get(key) == value for key, value in v3_signature.items()))
+            if daily_cycle_required(v3_marker, registry, now) or not v3_cache_matches:
+                archive_v3_marker(v3_marker_file, v3_marker)
+                result = evaluate_v3_challengers(v3_bundle, now)
+                result.update(v3_signature)
                 updated_marker = {'day': now.date().isoformat(), 'implementation_sha256': v3_hash,
-                                  'result': evaluate_v3_challengers(v3_bundle, now)}
+                                  **v3_signature, 'result': result}
                 replace_v3_marker(v3_marker_file, v3_marker, updated_marker)
                 v3_marker = updated_marker
-            except Exception as exc:
-                status['errors'].append('v3_challengers_' + type(exc).__name__)
+                v3_cache_matches = True
+        except Exception as exc:
+            status['errors'].append('v3_challengers_' + type(exc).__name__)
         status['v3_challengers'] = v3_marker.get('result', {'state': 'data_unavailable'})
-        if v3_marker.get('implementation_sha256') != v3_hash:
-            status['v3_challengers'] = {'state': 'implementation_changed_recalculation_required'}
+        if not v3_cache_matches:
+            reason = ('implementation_changed_recalculation_required'
+                      if v3_marker.get('implementation_sha256') != v3_hash
+                      else ('data_changed_recalculation_required' if v3_signature else 'data_unavailable'))
+            status['v3_challengers'] = {'state': reason}
         equities_file = state / 'equities.bundle.json'
         if equities_file.exists():
             try:
