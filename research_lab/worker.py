@@ -16,6 +16,7 @@ from .research import cycle, research_scope
 from .equity_paper import load as load_equity_paper, advance as advance_equity_paper, save as save_equity_paper, summary as equity_paper_summary, new_state
 from .fx import collect as collect_fx
 from supervisor.paper_policy import read_policy, advice
+from supervisor.market_context import market_features
 from .engine import TEMPLATES
 from .v3_challengers import CHALLENGERS, evaluate as evaluate_v3_challengers
 from .freqai_shadow import status as freqai_shadow_status
@@ -137,6 +138,7 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
               'crypto_research': {}, 'v3_challengers': {},
               'freqai_shadow': freqai_shadow_status(),
               'equities': {'state': 'awaiting_broker_data', 'broker_orders_activated': False}, 'errors': []}
+    contexts = {'crypto': [], 'equities': []}
     try:
         report_file = root / 'user_data/reports/latest.json'
         try:
@@ -182,6 +184,7 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
         try:
             data_file = state / 'crypto_daily.json'
             v3_bundle = validate(read_json(data_file), now)
+            contexts['crypto'] = market_features(v3_bundle, now)
             v3_signature = v3_data_signature(v3_bundle)
             v3_cache_matches = (v3_marker.get('implementation_sha256') == v3_hash
                                 and all(v3_marker.get(key) == value for key, value in v3_signature.items()))
@@ -206,6 +209,7 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
         if equities_file.exists():
             try:
                 bundle = current_equity_bundle(state, now)
+                contexts['equities'] = market_features(bundle, now)
                 if any(a['asset_class'] not in {'stock', 'etf'} for a in bundle['assets']):
                     raise ValueError('equities_data_scope')
                 equity_marker_file = state / 'last_equities.json'
@@ -269,6 +273,9 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
             except Exception as exc:
                 status['factory'] = {'state': 'not_eligible', 'error_type': type(exc).__name__}
         status['bots'] = registry.bots()
+        atomic_write(root / 'user_data/reports/market-context.json', json.dumps(
+            {'schema_version': 1, 'generated_at': now.isoformat(),
+             'policy_id': policy['id'] if policy else None, **contexts}, allow_nan=False))
         atomic_write(root / 'user_data/reports/autonomy.json', json.dumps(status, ensure_ascii=False, indent=2, allow_nan=False))
         print(json.dumps({k: status[k] for k in ['generated_at', 'mode', 'risk', 'equities', 'errors']}, ensure_ascii=False))
         return status

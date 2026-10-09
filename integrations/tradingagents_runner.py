@@ -6,7 +6,6 @@ No new provider, historical grid, broker connection or account key is added.
 import argparse
 import fcntl
 import json
-import math
 import os
 import re
 import signal
@@ -20,6 +19,7 @@ from pathlib import Path
 from supervisor.market_room import UPSTREAM_COMMIT, fresh
 from supervisor.report import atomic_write
 from supervisor.paper_policy import read_policy
+from supervisor.market_context import market_features
 
 TICKERS = {'CRYPTO-EUR': 'crypto', 'ACTIONS-USD': 'stock'}
 MAX_CALLS = 16
@@ -27,27 +27,6 @@ MAX_INPUT_CHARS = 240000
 ROLE_KEYS = ('market_report', 'news_report', 'bull', 'bear', 'risk', 'decision')
 BRIDGE_ERRORS = {'bridge_busy', 'body_too_large', 'unsafe_router_response',
                  'empty_router_response', 'jarvis_router_unavailable', 'unauthorized'}
-
-
-def market_features(bundle, now):
-    """Only dated, closed observations enter the model's market context."""
-    if not isinstance(bundle, dict) or not fresh(bundle.get('observed_at'), now, 96 * 3600):
-        return []
-    features = []
-    for asset in bundle.get('assets', [])[:16]:
-        try:
-            bars = asset['bars']
-            if len(bars) < 21 or not fresh(bars[-1]['close_at'], now, 96 * 3600):
-                continue
-            first, last = bars[-21]['close'], bars[-1]['close']
-            if any(type(price) not in {float, int} or not math.isfinite(price) or price <= 0 for price in [first, last]):
-                continue
-            features.append({'symbol': asset['id'], 'last_closed_at': bars[-1]['close_at'],
-                             'last_close': last, 'currency': bundle['currency'],
-                             'return_20_sessions_pct': round((last / first - 1) * 100, 3)})
-        except (ValueError, KeyError, TypeError, AttributeError):
-            continue
-    return features
 
 
 def record_bridge_failure(exc, budget):
@@ -282,18 +261,19 @@ def run(root, now=None, runner=run_child):
         if policy:
             crypto.update(simulation_policy=policy)
         equity_features = []
-        for name in ['crypto_daily.json', 'equities.bundle.json']:
-            source = root / 'research_state' / name
-            if source.exists() and source.stat().st_size < 8_000_000:
-                try:
-                    bundle = json.loads(source.read_text())
-                    features = market_features(bundle, now)
-                    if name == 'crypto_daily.json':
-                        crypto['market_features'] = features
-                    else:
-                        equity_features = features
-                except (ValueError,KeyError,TypeError,ZeroDivisionError):
-                    continue
+        # The research worker publishes only the small validated price context.
+        # User=ubuntu must never gain access to its root-only registry/state.
+        try:
+            context_file = reports / 'market-context.json'
+            if context_file.stat().st_size > 20000:
+                raise ValueError('market_context_too_large')
+            context = json.loads(context_file.read_text())
+            if (context.get('schema_version') == 1 and fresh(context.get('generated_at'), now, 900)
+                    and context.get('policy_id') == (policy['id'] if policy else None)):
+                crypto['market_features'] = context.get('crypto', [])[:16]
+                equity_features = context.get('equities', [])[:16]
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            pass
         atomic_write(runtime / 'evidence.json', json.dumps(crypto, ensure_ascii=False, allow_nan=False))
         analyses = [runner('CRYPTO-EUR', as_of, runtime)]
         session = research.get('equity_paper', {}).get('last_session')
