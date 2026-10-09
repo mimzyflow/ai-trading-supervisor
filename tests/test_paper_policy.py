@@ -126,3 +126,40 @@ class PaperPolicyTests(unittest.TestCase):
         for price in [True, 0, float('nan')]:
             bundle['assets'][0]['bars'][-1]['close'] = price
             self.assertEqual(market_features(bundle, self.now), [])
+
+    def test_manual_bridge_recovery_preserves_reservation_and_consumed_budget(self):
+        from integrations.tradingagents_runner import run, CallBudget
+        reports = self.root/'user_data/reports'; reports.mkdir(parents=True)
+        runtime = self.root/'.runtime/tradingagents'; runtime.mkdir(parents=True)
+        marker = runtime/('last_attempt-'+POLICY_ID+'.json')
+        marker.write_text(json.dumps({'day': self.now.date().isoformat(), 'previous_proof': 'keep'}))
+        failed = {'schema_version': 1, 'generated_at': (self.now-timedelta(minutes=10)).isoformat(),
+                  'upstream_commit': PIN, 'policy_id': POLICY_ID, 'can_trade': False, 'budget_eur': 0,
+                  'analyses': [{'ticker': desk, 'state': 'failed', 'http_status': 503,
+                    'error_code': 'jarvis_router_unavailable', 'calls': 1, 'input_characters': 50}
+                    for desk in ['CRYPTO-EUR', 'ACTIONS-USD']]}
+        (reports/'tradingagents.json').write_text(json.dumps(failed))
+        (reports/'latest.json').write_text(json.dumps({'generated_at':self.now.isoformat(),
+            'strategy':'MoussaMarketRoom','research':{'state':'current',
+             'equity_paper':{'last_session':self.now.isoformat()}}}))
+        calls=[]
+        def runner(desk, stamp, runtime):
+            evidence=json.loads((runtime/'evidence.json').read_text())
+            self.assertEqual(evidence['_consumed_budget'], {'calls':1,'input_characters':50})
+            calls.append(desk)
+            return {'ticker':desk, 'as_of':stamp, 'state':'complete', 'rating':'Hold', 'calls':9}
+        with patch('integrations.tradingagents_runner.os.geteuid', return_value=0), patch('integrations.tradingagents_runner.bridge_ready', return_value=True):
+            with patch('integrations.tradingagents_runner.reloaded_bridge_after',return_value=None):
+                self.assertEqual(run(self.root,self.now,runner,repair=True)['state'],'bridge_reload_not_verified')
+            self.assertEqual(calls, [])
+            with patch('integrations.tradingagents_runner.reloaded_bridge_after',return_value=self.now.isoformat()):
+                result=run(self.root,self.now,runner,repair=True)
+                self.assertEqual(run(self.root,self.now,runner,repair=True)['state'],'repair_not_eligible')
+                self.assertEqual(run(self.root,self.now,runner)['state'],'daily_budget_consumed')
+        self.assertEqual(len(calls), 2);self.assertEqual(result['manual_recovery']['reason'],'stale_bridge_reload')
+        saved=json.loads(marker.read_text());self.assertEqual(saved['previous_proof'],'keep')
+        self.assertIn('manual_recovery_at',saved);self.assertTrue(list((reports/'tradingagents-archive').iterdir()))
+        from types import SimpleNamespace
+        budget=CallBudget(15,0);budget.reserve([[SimpleNamespace(content='x')]])
+        with self.assertRaises(ValueError):budget.reserve([[SimpleNamespace(content='x')]])
+        with self.assertRaises(ValueError):CallBudget(True,0)

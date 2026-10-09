@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from importlib.metadata import distribution
 from pathlib import Path
 from supervisor.market_room import UPSTREAM_COMMIT, fresh
@@ -57,9 +57,11 @@ def failure_summary(exc):
 
 
 class CallBudget:
-    def __init__(self):
-        self.calls = 0
-        self.characters = 0
+    def __init__(self, calls=0, characters=0):
+        if type(calls) is not int or not 0 <= calls <= MAX_CALLS or type(characters) is not int or not 0 <= characters <= MAX_INPUT_CHARS:
+            raise ValueError('invalid_consumed_budget')
+        self.calls = calls
+        self.characters = characters
         self.lock = threading.Lock()
 
     def reserve(self, messages):
@@ -132,7 +134,9 @@ def analyze(ticker, as_of, work):
     from tradingagents.dataflows.config import run_config
     from tradingagents.agents.rating import run_rating
     from urllib.request import Request, build_opener, ProxyHandler
-    budget = CallBudget()
+    evidence = json.loads((work / 'evidence.json').read_text())
+    consumed = evidence.pop('_consumed_budget', {})
+    budget = CallBudget(consumed.get('calls', 0), consumed.get('input_characters', 0))
     class ReasoningBridge(BaseChatModel):
         @property
         def _llm_type(self):
@@ -155,7 +159,6 @@ def analyze(ticker, as_of, work):
             if not isinstance(content, str) or not content.strip():
                 raise ValueError('empty_bridge_response')
             return ChatResult(generations=[ChatGeneration(message=AIMessage(content=content[:6000]))])
-    evidence = json.loads((work / 'evidence.json').read_text())
     config = {'output_language': 'French'}
     state = Propagator().create_initial_state(ticker, as_of[:10], asset_type=TICKERS[ticker],
         instrument_context='Analyse du desk ' + ticker + '. Simulation uniquement. Tu ne disposes d’aucun outil d’ordre. '
@@ -219,7 +222,20 @@ def run_child(ticker, as_of, runtime):
             return {'ticker': ticker, 'as_of': as_of, 'state': 'failed', 'rating': 'REVIEW', 'error_type': 'InvalidResponse'}
 
 
-def run(root, now=None, runner=run_child):
+def reloaded_bridge_after(stamp, now):
+    """Read service start evidence; do not restart or call a provider here."""
+    try:
+        value = subprocess.check_output(['systemctl', 'show', 'jarvis-hermes-bridge.service',
+                                         '--property=ExecMainStartTimestampMonotonic', '--value'], text=True, timeout=5)
+        uptime = float(Path('/proc/uptime').read_text().split()[0])
+        started = now - timedelta(seconds=uptime - int(value.strip()) / 1_000_000)
+        previous = datetime.fromisoformat(stamp)
+        return started.isoformat() if previous.tzinfo is not None and previous < started <= now else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def run(root, now=None, runner=run_child, repair=False):
     now = now or datetime.now(timezone.utc)
     reports = root / 'user_data/reports'
     runtime = root / '.runtime/tradingagents'
@@ -235,7 +251,33 @@ def run(root, now=None, runner=run_child):
             previous = json.loads(marker.read_text())
         except (OSError, ValueError):
             previous = {}
-        if previous.get('day') == now.date().isoformat():
+        consumed = {}
+        recovery = None
+        if repair:
+            # Explicit maintenance only, never passed by the scheduled service.
+            # Preserve the daily reservation and charge all previous calls.
+            if os.geteuid() != 0 or not policy or previous.get('day') != now.date().isoformat() or previous.get('manual_recovery_at'):
+                return {'state': 'repair_not_eligible'}
+            old = json.loads((reports / 'tradingagents.json').read_text())
+            items = old.get('analyses', [])
+            if (old.get('schema_version') != 1 or old.get('can_trade') is not False or old.get('budget_eur') != 0
+                    or old.get('policy_id') != policy['id'] or old.get('upstream_commit') != UPSTREAM_COMMIT
+                    or not fresh(old.get('generated_at'), now, 5 * 3600) or len(items) != 2
+                    or {x.get('ticker') for x in items} != set(TICKERS)
+                    or any(x.get('state') != 'failed' or x.get('http_status') != 503
+                           or x.get('error_code') != 'jarvis_router_unavailable' or x.get('calls') != 1
+                           or type(x.get('input_characters')) is not int for x in items)):
+                return {'state': 'repair_not_eligible'}
+            reload_at = reloaded_bridge_after(old['generated_at'], now)
+            if not reload_at:
+                return {'state': 'bridge_reload_not_verified'}
+            consumed = {x['ticker']: {k: x[k] for k in ['calls', 'input_characters']} for x in items}
+            for value in consumed.values():
+                CallBudget(value['calls'], value['input_characters'])
+            import hashlib
+            recovery = {'reason': 'stale_bridge_reload', 'bridge_reloaded_at': reload_at,
+                        'previous_report_sha256': hashlib.sha256((reports / 'tradingagents.json').read_bytes()).hexdigest()}
+        if previous.get('day') == now.date().isoformat() and not repair:
             return {'state': 'daily_budget_consumed'}
         if not bridge_ready():
             return {'state': 'not_configured'}
@@ -246,7 +288,10 @@ def run(root, now=None, runner=run_child):
             return {'state': 'source_unavailable'}
         # Reserve before any provider call; a crash/failed response consumes the
         # daily attempt too. Re-running cannot create an unbounded retry bill.
-        atomic_write(marker, json.dumps({'day': now.date().isoformat()}))
+        reservation = {**previous, 'day': now.date().isoformat()} if repair else {'day': now.date().isoformat()}
+        if recovery:
+            reservation.update(manual_recovery_at=now.isoformat(), **recovery)
+        atomic_write(marker, json.dumps(reservation))
         path = reports / 'tradingagents.json'
         if path.exists():
             old = path.read_bytes()
@@ -260,6 +305,8 @@ def run(root, now=None, runner=run_child):
                       v3_observed_at=research.get('v3_observed_at'))
         if policy:
             crypto.update(simulation_policy=policy)
+        if consumed:
+            crypto['_consumed_budget'] = consumed['CRYPTO-EUR']
         equity_features = []
         # The research worker publishes only the small validated price context.
         # User=ubuntu must never gain access to its root-only registry/state.
@@ -281,6 +328,8 @@ def run(root, now=None, runner=run_child):
             equity = {key: research.get(key) for key in ['equity_paper', 'equity_v3', 'equities', 'sessions', 'required', 'observed_at', 'errors']}
             equity['currency'] = 'USD'
             equity.update(simulation_policy=policy, market_features=equity_features)
+            if consumed:
+                equity['_consumed_budget'] = consumed['ACTIONS-USD']
             atomic_write(runtime / 'evidence.json', json.dumps(equity, ensure_ascii=False, allow_nan=False))
             item = runner('ACTIONS-USD', as_of, runtime)
             item['bot_last_closed_session'] = session
@@ -290,6 +339,8 @@ def run(root, now=None, runner=run_child):
                    'can_trade': False, 'budget_eur': 0, 'provider': 'existing_jarvis_reasoning_bridge',
                    'actual_upstream_model_verified': False,
                    'analyses': analyses}
+        if recovery:
+            payload['manual_recovery'] = recovery
         atomic_write(path, json.dumps(payload, ensure_ascii=False, allow_nan=False))
         lines = ['# Avis TradingAgents, à examiner', '', 'Aucun ordre. Rapports des bots, EUR et USD séparés. Aucun flux de nouvelles indépendant.']
         for item in analyses:
@@ -310,11 +361,12 @@ def main():
     parser.add_argument('--child', choices=TICKERS)
     parser.add_argument('--as-of')
     parser.add_argument('--work', type=Path)
+    parser.add_argument('--repair-after-bridge-reload', action='store_true')
     args = parser.parse_args()
     if args.child:
         child(args.child, args.as_of, args.work)
     else:
-        run(args.root.resolve())
+        run(args.root.resolve(), repair=args.repair_after_bridge_reload)
 
 
 if __name__ == '__main__':

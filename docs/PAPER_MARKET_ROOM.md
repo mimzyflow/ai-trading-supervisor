@@ -62,6 +62,14 @@ produit sous la limite à 5 %. L'ancienne réservation et les rapports sont cons
 Le pont Jarvis garde ses quotas et fournisseurs actuels ; budget propre 0 EUR
 ne signifie pas que le fournisseur existant est gratuit.
 
+Exception de maintenance explicite : `--repair-after-bridge-reload` autorise
+une seule réparation manuelle après deux échecs HTTP 503 au premier appel,
+avec preuve systemd d'un rechargement du relais postérieur à ces échecs.
+Cette option exige root, n'est jamais passée par le timer ni la surveillance,
+conserve la réservation du jour et archive le rapport échoué. Les appels et
+caractères déjà consommés sont déduits des mêmes plafonds 16 / 240 000.
+Une seconde réparation est refusée, y compris après un nouveau crash.
+
 Jarvis : **Plus → Trading IA**. Sources privées fixes : `/api/trading`,
 `/api/trading/report` et `/api/trading/room-report`, avec session obligatoire.
 Les montants crypto EUR, les valeurs actions USD, la conversion EUR datée et
