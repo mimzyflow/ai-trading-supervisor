@@ -1,0 +1,20 @@
+[Unit]
+Description=Bounded zero-budget TradingAgents advisory research
+After=network-online.target trading-research.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/ai-trading-supervisor
+EnvironmentFile=/home/ubuntu/ai-trading-supervisor/.runtime/tradingagents/free-provider.env
+ExecStart=/home/ubuntu/ai-trading-supervisor/.runtime/tradingagents/venv/bin/python -m integrations.tradingagents_runner
+TimeoutStartSec=390
+MemoryMax=768M
+CPUQuota=50%
+TasksMax=48
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/ai-trading-supervisor/.runtime/tradingagents /home/ubuntu/ai-trading-supervisor/user_data/reports
+UMask=0077

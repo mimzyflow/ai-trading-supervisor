@@ -1,5 +1,9 @@
 # Rapports crypto et actions dans Jarvis
 
+La [salle des marchés supervisée](MARKET_ROOM.md) ajoute quatre desks de
+lecture et un connecteur TradingAgents isolé. Les avis externes restent
+consultatifs. Un arrêt de risque enregistré est préservé lors d'un déploiement.
+
 Les deux portefeuilles sont des simulations privées sur Oracle. Le moteur
 crypto Freqtrade conserve son historique et son contrôle V2 ; les actions
 utilisent un portefeuille brokerless en USD et trois shadows séparés.
