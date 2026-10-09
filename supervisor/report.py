@@ -296,7 +296,7 @@ def collect(api=None):
             try:
                 from .loss_alerts import update
             except ImportError:
-                from supervisor.loss_alerts import update
+                from loss_alerts import update
             events = update(data, REPORTS, now, read_policy())
             data['market_room']['loss_alerts'] = events
             for event in events:

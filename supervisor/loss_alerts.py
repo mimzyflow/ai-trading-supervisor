@@ -1,6 +1,9 @@
 """Durable loss notifications. Recording an alert never stops a simulation."""
 import json
-from .report import atomic_write
+try:
+    from .report import atomic_write
+except ImportError:
+    from report import atomic_write
 
 
 def update(report, reports, now, policy):

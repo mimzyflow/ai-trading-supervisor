@@ -93,8 +93,10 @@ def build(report, reports, now=None):
 
 def render(room):
     labels = {'crypto': 'Crypto (EUR)', 'equities': 'Actions (USD)', 'research': 'Recherche historique', 'risk': 'Risque indépendant'}
-    lines = ['# Salle des marchés supervisée', '', '- TradingAgents 0.6.0, analyse consultative uniquement.',
-             '- Budget IA : 0 EUR. Aucun avis ne modifie un ordre, une stratégie ou un état financier.',
+    executing = bool(room.get('simulation_execution'))
+    lines = ['# Salle des marchés supervisée', '',
+             '- TradingAgents 0.6.0, avis appliqués aux simulations autorisées.' if executing else '- TradingAgents 0.6.0, analyse consultative uniquement.',
+             '- Budget IA propre : 0 EUR. Aucun ordre réel.' if executing else '- Budget IA : 0 EUR. Aucun avis ne modifie un ordre, une stratégie ou un état financier.',
              '- Observation : ' + room['observed_at']]
     lines += ['- ' + labels[name] + ' : ' + room['desks'][name]['state'] for name in DESKS]
     lines += ['', '## Points à examiner'] + ['- ' + value for value in room['decisions']]

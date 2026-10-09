@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 import sys
+import subprocess
 import tempfile
 import types
 import unittest
@@ -82,6 +83,13 @@ class PaperPolicyTests(unittest.TestCase):
         second=update(report,self.root,self.now+timedelta(minutes=5),self.policy)
         self.assertEqual(first,second);self.assertEqual(first[0]['loss_level_pct'],85)
         self.assertEqual(first[0]['action'],'notify_only');self.assertNotIn('halted',report)
+
+    def test_loss_alert_module_also_loads_in_standalone_report_runtime(self):
+        # Production starts supervisor/report.py directly, without the package
+        # parent on sys.path. Exercise that import layout in an isolated process.
+        code = 'import sys; sys.path.insert(0, '+repr(str(ROOT/'supervisor'))+'); from loss_alerts import update; assert callable(update)'
+        result = subprocess.run([sys.executable, '-I', '-c', code], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_fx_requires_dated_reference_and_has_no_one_to_one_default(self):
         value={'source':URL,'rate_at':self.now.isoformat(),'usd_per_eur':1.1206}
