@@ -12,7 +12,7 @@ from supervisor.market_room import build, read_ai, UPSTREAM_COMMIT
 from supervisor.healthcheck import check
 from scripts.install_release import activate_preserving_risk
 from scripts.install_market_room import bridge_environment, own_runtime
-from integrations.tradingagents_runner import CallBudget, run
+from integrations.tradingagents_runner import CallBudget, run, record_bridge_failure, failure_summary
 
 
 class MarketRoomTests(unittest.TestCase):
@@ -85,6 +85,23 @@ class MarketRoomTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'llm_budget_exceeded'):
             budget.reserve([[SimpleNamespace(content='message')]])
         self.assertEqual(budget.calls, 16)
+
+    def test_bridge_failure_preserves_call_count_without_response_details(self):
+        from io import BytesIO
+        from urllib.error import HTTPError
+        budget = CallBudget()
+        budget.reserve([[SimpleNamespace(content='message')]])
+        error = HTTPError('http://127.0.0.1', 502, 'Failure', {},
+                          BytesIO(b'{"error":"unsafe_router_response","secret":"sentinel"}'))
+        record_bridge_failure(error, budget)
+        result = failure_summary(error)
+        self.assertEqual(result['http_status'], 502)
+        self.assertEqual(result['calls'], 1)
+        self.assertEqual(result['error_code'], 'unsafe_router_response')
+        self.assertNotIn('sentinel', json.dumps(result))
+        error = HTTPError('http://127.0.0.1', 503, 'sentinel', {}, BytesIO(b'{"error":"sentinel"}'))
+        record_bridge_failure(error, budget)
+        self.assertNotIn('sentinel', json.dumps(failure_summary(error)))
 
     def test_deployment_cannot_restart_a_risk_stopped_simulation(self):
         (self.root / 'research_state').mkdir()

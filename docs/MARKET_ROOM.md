@@ -12,7 +12,7 @@ Le nombre d'étoiles et les démonstrations du projet ne valident pas une rentab
 - Actions : témoin et trois V3 brokerless USD, sans somme des comptes fictifs.
 - Recherche : résultats historiques et refus V3, jamais assimilés au paper futur.
 - Risque : garde déterministe existant, prioritaire sur tout avis IA.
-- TradingAgents : analystes marché et actualités, débat haussier/baissier,
+- TradingAgents : analyses des rapports fournis, débat haussier/baissier,
   contradicteurs de risque et avis final à examiner. Aucun raccordement courtier.
 
 La salle déterministe est actualisée avec le rapport toutes les cinq minutes.
@@ -76,6 +76,22 @@ L'installation optionnelle isolée suit `sudo -n python3 scripts/install_market_
 `--activate` configure le timer et lance la première tentative bornée. Aucune
 configuration Freqtrade, clé exchange, ordre, portefeuille ni gel n'est modifié.
 
-Validation source : 185 tests trading réussis ; paquet amont réellement
-installé et graphe marché/news construit sans appel IA. Les preuves de
-déploiement et de première analyse doivent être consignées après vérification.
+## Vérification du pilote
+
+Le 9 octobre à 17:34 UTC, première tentative réellement exécutée : desk
+CRYPTO-EUR terminé, 8 appels, avis Underweight ; desk ACTIONS-USD échoué
+(`HTTPError`), sans avis financier utilisable. La première erreur n'a pas
+conservé le statut HTTP, donc sa cause précise n'est pas attestée. Les futurs
+échecs conservent le statut, le nombre d'appels et un code fermé autorisé,
+jamais le corps brut du fournisseur. Aucune relance ne contourne le plafond
+quotidien ; les deux résultats et la réservation restent conservés.
+
+Validation source : 187 tests trading réussis, sans test ignoré dans
+l'environnement de recherche. Paquet amont réellement installé sur Mac et
+Oracle ARM ; timer quotidien activé. Le déploiement préserve l'arrêt de risque,
+les bases, les dates de création et les capitaux papier.
+
+Un défaut d'installation suivant les liens du venv avait changé le propriétaire
+de `/usr/bin/python3.12`. Les droits système ont été restaurés immédiatement
+(`root:root`, 0755) ; l'installateur utilise désormais
+`os.chown(..., follow_symlinks=False)`, couvert par un test.

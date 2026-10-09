@@ -23,6 +23,35 @@ TICKERS = {'CRYPTO-EUR': 'crypto', 'ACTIONS-USD': 'stock'}
 MAX_CALLS = 16
 MAX_INPUT_CHARS = 240000
 ROLE_KEYS = ('market_report', 'news_report', 'bull', 'bear', 'risk', 'decision')
+BRIDGE_ERRORS = {'bridge_busy', 'body_too_large', 'unsafe_router_response',
+                 'empty_router_response', 'jarvis_router_unavailable', 'unauthorized'}
+
+
+def record_bridge_failure(exc, budget):
+    """Keep bounded diagnostics, never a provider response or credentials."""
+    exc.advisory_calls = budget.calls
+    exc.advisory_characters = budget.characters
+    if type(getattr(exc, 'code', None)) is int:
+        exc.advisory_status = exc.code
+        try:
+            reason = json.loads(exc.read(1024)).get('error')
+            if isinstance(reason, str) and reason in BRIDGE_ERRORS:
+                exc.advisory_reason = reason
+        except (ValueError, OSError, AttributeError, TypeError):
+            pass
+
+
+def failure_summary(exc):
+    result = {'state': 'failed', 'rating': 'REVIEW', 'error_type': type(exc).__name__}
+    for key, attribute in [('calls', 'advisory_calls'), ('input_characters', 'advisory_characters'),
+                           ('http_status', 'advisory_status')]:
+        value = getattr(exc, attribute, None)
+        if type(value) is int:
+            result[key] = value
+    reason = getattr(exc, 'advisory_reason', None)
+    if reason in BRIDGE_ERRORS:
+        result['error_code'] = reason
+    return result
 
 
 class CallBudget:
@@ -114,8 +143,12 @@ def analyze(ticker, as_of, work):
             req = Request('http://127.0.0.1:20129/v1/chat/completions',
                           data=json.dumps(body).encode(), headers={'Content-Type': 'application/json',
                           'Authorization': 'Bearer ' + os.environ['MARKET_ROOM_BRIDGE_TOKEN']})
-            with build_opener(ProxyHandler({})).open(req, timeout=35) as response:
-                data = json.loads(response.read(64000))
+            try:
+                with build_opener(ProxyHandler({})).open(req, timeout=35) as response:
+                    data = json.loads(response.read(64000))
+            except Exception as exc:
+                record_bridge_failure(exc, budget)
+                raise
             content = data['choices'][0]['message']['content']
             if not isinstance(content, str) or not content.strip():
                 raise ValueError('empty_bridge_response')
@@ -150,8 +183,7 @@ def child(ticker, as_of, work):
         with open(os.devnull, 'w') as sink, redirect_stdout(sink), redirect_stderr(sink):
             result = analyze(ticker, as_of, work)
     except Exception as exc:
-        result = {'ticker': ticker, 'as_of': as_of, 'state': 'failed', 'rating': 'REVIEW',
-                  'error_type': type(exc).__name__}
+        result = {'ticker': ticker, 'as_of': as_of, **failure_summary(exc)}
     print(json.dumps(result, ensure_ascii=False, allow_nan=False))
 
 
@@ -241,7 +273,8 @@ def run(root, now=None, runner=run_child):
             for role, value in item.get('roles', {}).items():
                 lines += ['', '### ' + role, '', value]
             if item.get('error_type'):
-                lines.append('Analyse indisponible : ' + item['error_type'])
+                lines.append('Analyse indisponible : ' + item['error_type']
+                             + (' / ' + item['error_code'] if item.get('error_code') else ''))
         atomic_write(reports / 'tradingagents.md', '\n'.join(lines) + '\n')
         print(json.dumps({'state': 'finished', 'analyses': [{'ticker': x['ticker'], 'state': x['state']} for x in analyses]}))
         return payload
