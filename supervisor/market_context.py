@@ -5,7 +5,14 @@ from .market_room import fresh
 
 def market_features(bundle, now):
     """Only dated, closed observations enter the model's market context."""
-    if not isinstance(bundle, dict) or not fresh(bundle.get('observed_at'), now, 96 * 3600):
+    if not isinstance(bundle, dict):
+        return []
+    # Kraken's canonical bundle has no collection timestamp. Its validated
+    # closed-bar dates remain the authority; never invent observed_at for it.
+    if 'observed_at' in bundle:
+        if not fresh(bundle.get('observed_at'), now, 96 * 3600):
+            return []
+    elif bundle.get('provider') != 'kraken_public_ohlc':
         return []
     features = []
     for asset in bundle.get('assets', [])[:16]:
@@ -22,4 +29,3 @@ def market_features(bundle, now):
         except (ValueError, KeyError, TypeError, AttributeError):
             continue
     return features
-

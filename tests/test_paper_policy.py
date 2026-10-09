@@ -116,6 +116,9 @@ class PaperPolicyTests(unittest.TestCase):
         bundle = {'observed_at': self.now.isoformat(), 'currency': 'USD',
                   'assets': [{'id': 'TEST', 'bars': [dict(bar) for _ in range(21)]}]}
         self.assertEqual(market_features(bundle, self.now)[0]['return_20_sessions_pct'], 0)
+        canonical = {key: value for key, value in bundle.items() if key != 'observed_at'}
+        canonical['provider'] = 'kraken_public_ohlc'
+        self.assertEqual(market_features(canonical, self.now)[0]['last_closed_at'], self.now.isoformat())
         for stamp in [self.now + timedelta(seconds=1), self.now - timedelta(days=5)]:
             bundle['assets'][0]['bars'][-1]['close_at'] = stamp.isoformat()
             self.assertEqual(market_features(bundle, self.now), [])
