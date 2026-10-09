@@ -38,7 +38,7 @@ class Registry:
     def bots(self):
         return [dict(row) for row in self.db.execute('SELECT * FROM bots ORDER BY depth,id')]
 
-    def assess(self, report, now=None):
+    def assess(self, report, now=None, loss_limit=MAX_DRAWDOWN):
         now = now or datetime.now(timezone.utc)
         observed = stamp(report.get('observed_at'))
         if not 0 <= (now - observed).total_seconds() <= 900:
@@ -49,8 +49,10 @@ class Registry:
         initial = finite(report['starting_balance_eur'], 0.00000001)
         equity = finite(report['equity_eur'])
         peak = max(initial, finite(report.get('equity_peak_eur', initial)))
-        reason = 'zero_equity' if equity <= 0 else ('drawdown_limit' if (peak - equity) / peak >= MAX_DRAWDOWN else None)
+        reason = 'zero_equity' if equity <= 0 else ('drawdown_limit' if loss_limit is not None and (peak - equity) / peak >= loss_limit else None)
         status = 'retired' if equity <= 0 else ('paused_risk' if reason else 'research_only')
+        if loss_limit is None:
+            status = 'research_only'
         previous = self.db.execute("SELECT status FROM bots WHERE id='root'").fetchone()[0]
         if previous == 'paper_validated' and not reason:
             status = previous
@@ -59,7 +61,9 @@ class Registry:
         if previous != status:
             self.db.execute("UPDATE bots SET status=? WHERE id='root'", (status,))
             self.event('risk_state', {'status': status, 'reason': reason, 'equity': equity})
-        return {'state': status, 'reason': reason, 'drawdown_pct': (peak - equity) / peak * 100,
+        return {'state': ('capital_exhausted' if equity <= 0 else 'monitoring_only') if loss_limit is None and previous not in {'paused_risk','retired'} else status,
+                'reason': reason, 'drawdown_pct': (peak - equity) / peak * 100,
+                'loss_limit_pct': loss_limit * 100 if loss_limit is not None else None,
                 'destroy_files': False, 'real_money_eligible': False}
 
     def create_child(self, parent, evidence, now=None):

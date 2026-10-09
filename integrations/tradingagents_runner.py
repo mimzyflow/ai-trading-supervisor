@@ -6,6 +6,7 @@ No new provider, historical grid, broker connection or account key is added.
 import argparse
 import fcntl
 import json
+import math
 import os
 import re
 import signal
@@ -18,6 +19,7 @@ from importlib.metadata import distribution
 from pathlib import Path
 from supervisor.market_room import UPSTREAM_COMMIT, fresh
 from supervisor.report import atomic_write
+from supervisor.paper_policy import read_policy
 
 TICKERS = {'CRYPTO-EUR': 'crypto', 'ACTIONS-USD': 'stock'}
 MAX_CALLS = 16
@@ -25,6 +27,27 @@ MAX_INPUT_CHARS = 240000
 ROLE_KEYS = ('market_report', 'news_report', 'bull', 'bear', 'risk', 'decision')
 BRIDGE_ERRORS = {'bridge_busy', 'body_too_large', 'unsafe_router_response',
                  'empty_router_response', 'jarvis_router_unavailable', 'unauthorized'}
+
+
+def market_features(bundle, now):
+    """Only dated, closed observations enter the model's market context."""
+    if not isinstance(bundle, dict) or not fresh(bundle.get('observed_at'), now, 96 * 3600):
+        return []
+    features = []
+    for asset in bundle.get('assets', [])[:16]:
+        try:
+            bars = asset['bars']
+            if len(bars) < 21 or not fresh(bars[-1]['close_at'], now, 96 * 3600):
+                continue
+            first, last = bars[-21]['close'], bars[-1]['close']
+            if any(type(price) not in {float, int} or not math.isfinite(price) or price <= 0 for price in [first, last]):
+                continue
+            features.append({'symbol': asset['id'], 'last_closed_at': bars[-1]['close_at'],
+                             'last_close': last, 'currency': bundle['currency'],
+                             'return_20_sessions_pct': round((last / first - 1) * 100, 3)})
+        except (ValueError, KeyError, TypeError, AttributeError):
+            continue
+    return features
 
 
 def record_bridge_failure(exc, budget):
@@ -156,7 +179,9 @@ def analyze(ticker, as_of, work):
     evidence = json.loads((work / 'evidence.json').read_text())
     config = {'output_language': 'French'}
     state = Propagator().create_initial_state(ticker, as_of[:10], asset_type=TICKERS[ticker],
-        instrument_context='Analyse du desk ' + ticker + '. Simulation uniquement. Aucun ordre ni changement de stratégie. '
+        instrument_context='Analyse du desk ' + ticker + '. Simulation uniquement. Tu ne disposes d’aucun outil d’ordre. '
+                           'Applique la politique fournie : nouveau capital 100 EUR par bot, aucun stop de perte. '
+                           'Ton avis Buy/Overweight/Hold/Underweight/Sell pourra influencer uniquement les simulations autorisées. '
                            'Utilise seulement les preuves fournies, distingue dates et devises et propose des vérifications humaines.')
     state.update(market_report=json.dumps(evidence, ensure_ascii=False),
                  news_report='Aucun flux d’actualité indépendant fourni. Ne pas inventer de nouvelles.',
@@ -225,7 +250,8 @@ def run(root, now=None, runner=run_child):
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return {'state': 'already_running'}
-        marker = runtime / 'last_attempt.json'
+        policy = read_policy(root)
+        marker = runtime / ('last_attempt-' + policy['id'] + '.json' if policy else 'last_attempt.json')
         try:
             previous = json.loads(marker.read_text())
         except (OSError, ValueError):
@@ -236,7 +262,8 @@ def run(root, now=None, runner=run_child):
             return {'state': 'not_configured'}
         report = json.loads((reports / 'latest.json').read_text())
         research = report.get('research', {})
-        if not fresh(report.get('generated_at'), now, 900) or research.get('state') != 'current':
+        if (not fresh(report.get('generated_at'), now, 900) or research.get('state') != 'current'
+                or (policy and report.get('strategy') != 'MoussaMarketRoom')):
             return {'state': 'source_unavailable'}
         # Reserve before any provider call; a crash/failed response consumes the
         # daily attempt too. Re-running cannot create an unbounded retry bill.
@@ -252,17 +279,34 @@ def run(root, now=None, runner=run_child):
         crypto = {key: report.get(key) for key in ['mode', 'observed_at', 'equity_eur', 'total_return_pct', 'closed_trades', 'v2', 'alerts']}
         crypto.update(currency='EUR', risk=research.get('risk_control'), v3_historical=research.get('v3_results'),
                       v3_observed_at=research.get('v3_observed_at'))
+        if policy:
+            crypto.update(simulation_policy=policy)
+        equity_features = []
+        for name in ['crypto_daily.json', 'equities.bundle.json']:
+            source = root / 'research_state' / name
+            if source.exists() and source.stat().st_size < 8_000_000:
+                try:
+                    bundle = json.loads(source.read_text())
+                    features = market_features(bundle, now)
+                    if name == 'crypto_daily.json':
+                        crypto['market_features'] = features
+                    else:
+                        equity_features = features
+                except (ValueError,KeyError,TypeError,ZeroDivisionError):
+                    continue
         atomic_write(runtime / 'evidence.json', json.dumps(crypto, ensure_ascii=False, allow_nan=False))
         analyses = [runner('CRYPTO-EUR', as_of, runtime)]
         session = research.get('equity_paper', {}).get('last_session')
         if fresh(session, now, 96 * 3600):
             equity = {key: research.get(key) for key in ['equity_paper', 'equity_v3', 'equities', 'sessions', 'required', 'observed_at', 'errors']}
             equity['currency'] = 'USD'
+            equity.update(simulation_policy=policy, market_features=equity_features)
             atomic_write(runtime / 'evidence.json', json.dumps(equity, ensure_ascii=False, allow_nan=False))
             item = runner('ACTIONS-USD', as_of, runtime)
             item['bot_last_closed_session'] = session
             analyses.append(item)
         payload = {'schema_version': 1, 'generated_at': now.isoformat(), 'upstream_commit': UPSTREAM_COMMIT,
+                   'policy_id': policy['id'] if policy else None,
                    'can_trade': False, 'budget_eur': 0, 'provider': 'existing_jarvis_reasoning_bridge',
                    'actual_upstream_model_verified': False,
                    'analyses': analyses}

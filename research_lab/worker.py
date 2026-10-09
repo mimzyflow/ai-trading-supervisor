@@ -13,7 +13,9 @@ from .collect import fetch_crypto_broad
 from .data import validate, stamp, canonical_hash
 from .governor import Registry
 from .research import cycle, research_scope
-from .equity_paper import load as load_equity_paper, advance as advance_equity_paper, save as save_equity_paper, summary as equity_paper_summary
+from .equity_paper import load as load_equity_paper, advance as advance_equity_paper, save as save_equity_paper, summary as equity_paper_summary, new_state
+from .fx import collect as collect_fx
+from supervisor.paper_policy import read_policy, advice
 from .engine import TEMPLATES
 from .v3_challengers import CHALLENGERS, evaluate as evaluate_v3_challengers
 from .freqai_shadow import status as freqai_shadow_status
@@ -129,6 +131,7 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
         lock.close()
         return {'state': 'already_running'}
     registry = Registry(state / 'registry.sqlite')
+    policy = read_policy(root)
     status = {'schema_version': 1, 'generated_at': now.isoformat(), 'mode': 'RESEARCH_AND_PAPER_ONLY',
               'live_orders_supported': False, 'max_bots': 3, 'max_generation': 2,
               'crypto_research': {}, 'v3_challengers': {},
@@ -137,7 +140,7 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
     try:
         report_file = root / 'user_data/reports/latest.json'
         try:
-            decision = registry.assess(read_json(report_file), now)
+            decision = registry.assess(read_json(report_file), now, loss_limit=None if policy else .05)
             status['risk'] = {**decision, 'observation_verified': True}
         except Exception as exc:
             stored_state = registry.db.execute("SELECT status FROM bots WHERE id='root'").fetchone()[0]
@@ -230,6 +233,30 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
                     shadows[name] = equity_paper_summary(shadow)
                 status['equities'] = {**equity_marker['result'], 'paper': equity_paper_summary(paper),
                                       'v3_shadow': shadows, 'broker_orders_activated': False}
+                if policy:
+                    fx = collect_fx(state / 'eur-usd.json', now)
+                    funded_file = state / ('equity_' + policy['id'] + '.json')
+                    if funded_file.exists():
+                        funded = load_equity_paper(funded_file, now)
+                    else:
+                        funded = new_state(now, initial=100 * fx['usd_per_eur'],
+                                           last_session=bundle['assets'][0]['bars'][-1]['close_at'])
+                        funded.update(policy_id=policy['id'], initial_eur=100,
+                                      funding_fx=fx, funded_at=now.isoformat())
+                    ai = advice(root / 'user_data/reports', 'ACTIONS-USD', now, policy)
+                    funded = advance_equity_paper(bundle, funded, TEMPLATES[0], now=now,
+                        max_drawdown=None, loss_stops=False, allocation=10 * fx['usd_per_eur'],
+                        advisory=ai, execution_revision='market_room_no_loss_stops_v1')
+                    funded.update(advisory=ai, loss_limit_pct=None, position_loss_stops=False)
+                    save_equity_paper(funded_file, funded)
+                    current = equity_paper_summary(funded)
+                    current.update(initial_eur=100, equity_eur=round(funded['equity']/fx['usd_per_eur'],4),
+                                   return_eur_pct=round((funded['equity']/fx['usd_per_eur']/100-1)*100,4),
+                                   funding_usd=round(funded['initial_cash'],4), funding_fx_date=funded['funding_fx']['date'],
+                                   fx_usd_per_eur=fx['usd_per_eur'], fx_date=fx['date'],
+                                   policy_id=policy['id'], funded_at=funded['funded_at'], advisory=ai,
+                                   loss_limit_pct=None, position_loss_stops=False)
+                    status['equities'].update(control=status['equities']['paper'], paper=current)
             except Exception as exc:
                 status['equities'] = {'state': 'invalid_broker_data', 'error_type': type(exc).__name__, 'broker_orders_activated': False}
                 status['errors'].append('equity_collection_' + type(exc).__name__)

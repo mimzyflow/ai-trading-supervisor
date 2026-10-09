@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "market-room-100eur-20261009",
+  "mode": "SIMULATION_ONLY",
+  "active": true,
+  "initial_eur_per_bot": 100,
+  "portfolio_loss_limit_pct": null,
+  "position_loss_stops": false,
+  "ai_influence": true,
+  "authorized_at": "2026-10-09T18:02:17+00:00",
+  "authorization": "Moussa: 100 EUR virtuels par bot, retirer tous les stops de perte",
+  "real_money_eligible": false
+}

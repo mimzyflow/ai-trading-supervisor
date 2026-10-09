@@ -105,6 +105,13 @@ def install(params):
     # changing active files. A refusal here must never enter activation/rollback.
     candidate_compose = ['docker', 'compose', '--project-directory', str(root), '-f', str(stage / 'docker-compose.yml')]
     preflight_simulation_compose(candidate_compose)
+    if (stage / 'simulation-policy.json').exists():
+        # Import the staged validator before changing code or risk state.
+        import importlib.util
+        native_spec=importlib.util.spec_from_file_location('candidate_native_check',stage/'scripts/check_market_room_strategy.py')
+        native_module=importlib.util.module_from_spec(native_spec)
+        native_spec.loader.exec_module(native_module)
+        native_module.check(stage)
     files = [p.relative_to(stage) for p in stage.rglob('*') if p.is_file() and '__pycache__' not in p.parts]
     existed = []
     for relative in files + [Path('build-info.json')]:
@@ -118,12 +125,19 @@ def install(params):
     unit_paths = [Path('/etc/systemd/system') / name for name in ['trading-research.service', 'trading-research.timer']]
     saved_units = {p: p.read_bytes() if p.exists() else None for p in unit_paths}
     timer_previously_enabled = subprocess.run(['systemctl', 'is-enabled', '--quiet', 'trading-research.timer'], capture_output=True).returncode == 0
+    policy_previous = None
     try:
+        run(['systemctl', 'stop', 'trading-research.timer', 'trading-research.service'], capture_output=True)
         for relative in files:
             destination = root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(stage / relative, destination)
         (root / 'build-info.json').write_text(json.dumps({**params, 'deployed_at': datetime.now(timezone.utc).isoformat(), 'backup': str(backup)}, indent=2))
+        if (root / 'simulation-policy.json').exists():
+            import sys
+            sys.path.insert(0, str(root))
+            from scripts.activate_paper_policy import activate
+            policy_previous = activate(root)
         install_research_units(root)
         run(['docker', 'exec', 'ai-trading-supervisor', 'python', 'supervisor/report.py'], capture_output=True, timeout=45)
         halted = activate_preserving_risk(compose, ['-d', '--wait', '--wait-timeout', '120'], root)
@@ -143,6 +157,9 @@ def install(params):
         archive.unlink()
     except Exception:
         subprocess.run(['systemctl', 'stop', 'trading-research.timer', 'trading-research.service'], capture_output=True)
+        if policy_previous is not None:
+            from scripts.activate_paper_policy import rollback
+            rollback(root, policy_previous)
         restore_files(root, backup, files + [Path('build-info.json')], existed)
         for path, previous in saved_units.items():
             if previous is None:

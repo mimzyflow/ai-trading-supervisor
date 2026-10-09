@@ -117,10 +117,11 @@ def _corporate_action_block(assets, state, dates, now):
                 return 'corporate_action_requires_review'
     return None
 
-def advance(bundle,state,spec,fee=.001,min_commission=1,slippage=.001,allocation=10,reserve_ratio=.10,max_drawdown=.05,now=None,risk_model=False):
+def advance(bundle,state,spec,fee=.001,min_commission=1,slippage=.001,allocation=10,reserve_ratio=.10,max_drawdown=.05,now=None,risk_model=False,
+            loss_stops=True, advisory=None, execution_revision=EXECUTION_REVISION):
     check_spec(spec); now=now or datetime.now(timezone.utc)
-    max_drawdown = finite(max_drawdown, 0.00000001)
-    if max_drawdown > .05:
+    max_drawdown = finite(max_drawdown, 0.00000001) if max_drawdown is not None else None
+    if max_drawdown is not None and max_drawdown > .05:
         raise ValueError('invalid_paper_drawdown_limit')
     assets=bundle['assets']; dates=[x['close_at'] for x in assets[0]['bars']]
     if any([x['close_at'] for x in a['bars']]!=dates for a in assets): raise ValueError('paper_sessions_must_align')
@@ -132,14 +133,14 @@ def advance(bundle,state,spec,fee=.001,min_commission=1,slippage=.001,allocation
         blocked = ('position_market_data_unavailable' if set(state['positions']) - set(by_id)
                    else _position_ages(state, dates))
     state['paper_engine_version'] = PAPER_ENGINE_VERSION
-    if state.get('execution_revision') != EXECUTION_REVISION:
-        state['execution_revision'] = EXECUTION_REVISION
+    if state.get('execution_revision') != execution_revision:
+        state['execution_revision'] = execution_revision
         state['execution_revision_started_at'] = now.isoformat()
     state['blocked_reason'] = blocked
     state['halted'] = bool(state.get('halted'))
     state.setdefault('halt_reason', None)
     # A historical breach remains a breach even if the legacy portfolio recovered.
-    if state['max_drawdown_pct'] >= max_drawdown * 100:
+    if max_drawdown is not None and state['max_drawdown_pct'] >= max_drawdown * 100:
         state['halted'] = True
         state['halt_reason'] = state['halt_reason'] or 'portfolio_drawdown'
     if blocked:
@@ -156,12 +157,16 @@ def advance(bundle,state,spec,fee=.001,min_commission=1,slippage=.001,allocation
             (state['peak_equity'] - equity) / state['peak_equity'] * 100)
 
     def breached(equity):
-        return (state['peak_equity'] - equity) / state['peak_equity'] + 1e-12 >= max_drawdown
+        return max_drawdown is not None and (state['peak_equity'] - equity) / state['peak_equity'] + 1e-12 >= max_drawdown
 
     def sell(asset, session, price, reason):
         position = state['positions'].pop(asset['id'])
         gross = position['quantity'] * price * (1 - slippage)
-        proceeds = gross - max(min_commission, gross * fee)
+        # No paper borrowing if the asset becomes virtually worthless.
+        commission = max(min_commission, gross * fee)
+        if max_drawdown is None:
+            commission = min(commission, gross + state['cash'])
+        proceeds = gross - commission
         state['cash'] += proceeds
         state['trades'].append({'asset': asset['id'], 'side': 'closed',
             'entry_session': position['entry_session'], 'exit_session': session,
@@ -176,6 +181,7 @@ def advance(bundle,state,spec,fee=.001,min_commission=1,slippage=.001,allocation
 
     for i,session in enumerate(dates):
         if stamp(session)>now or (state['last_session'] and stamp(session)<=stamp(state['last_session'])): continue
+        ai = advisory if advisory and advisory.get('as_of') and stamp(advisory['as_of']) <= stamp(session) else None
         for position in state['positions'].values():
             position['held_sessions'] += 1
             position['held_as_of'] = session
@@ -191,13 +197,13 @@ def advance(bundle,state,spec,fee=.001,min_commission=1,slippage=.001,allocation
             reason, exit_price = None, None
             stop = p['entry_price'] * (1 - spec['stop_loss'])
             # Position stops protect V2 too; risk_model only controls entry sizing.
-            if bar['open'] <= stop:
+            if loss_stops and bar['open'] <= stop:
                 reason, exit_price = 'stop_loss_gap', bar['open']
-            elif bar['low'] <= stop:
+            elif loss_stops and bar['low'] <= stop:
                 reason, exit_price = 'stop_loss', stop
             previous_high = p.get('highest_price', p['entry_price'])
             activation, distance = spec.get('trailing_activation'), spec.get('trailing_distance')
-            if reason is None and activation is not None and distance is not None and previous_high >= p['entry_price'] * (1 + activation):
+            if loss_stops and reason is None and activation is not None and distance is not None and previous_high >= p['entry_price'] * (1 + activation):
                 trail = previous_high * (1 - distance)
                 if bar['open'] <= trail:
                     reason, exit_price = 'trailing_stop_gap', bar['open']
@@ -211,6 +217,8 @@ def advance(bundle,state,spec,fee=.001,min_commission=1,slippage=.001,allocation
                 elif bar['high'] >= target_price:
                     reason, exit_price = 'take_profit', target_price
             timed_out = p['held_sessions'] >= spec['max_hold']
+            if reason is None and ai and ai.get('exit'):
+                reason, exit_price = 'market_room_sell', bar['close']
             if reason is None and (_exit(a,i,spec) or timed_out):
                 reason, exit_price = ('time_limit' if timed_out else 'trend_exit'), bar['close']
             if reason is not None:
@@ -223,10 +231,10 @@ def advance(bundle,state,spec,fee=.001,min_commission=1,slippage=.001,allocation
             halt_and_liquidate(i, session, 'close')
         else:
             for a in assets:
-                if a['id'] in state['positions'] or not _entry(a,i,spec): continue
+                if a['id'] in state['positions'] or not _entry(a,i,spec) or (ai and not ai.get('allow_entry')): continue
                 bar=a['bars'][i]; price=bar['close']*(1+slippage)
                 usable=max(0,state['equity']*(1-reserve_ratio)-sum(p['cost'] for p in state['positions'].values()))
-                budget=min(allocation,state['cash'],usable)
+                budget=min(allocation * (ai['stake_multiplier'] if ai else 1),state['cash'],usable)
                 if risk_model:
                     risk_budget,_=entry_budget(bundle,state,i,a,equity_before,allocation=allocation)
                     budget=min(budget,risk_budget)
@@ -237,7 +245,7 @@ def advance(bundle,state,spec,fee=.001,min_commission=1,slippage=.001,allocation
                 state['cash']-=cost
                 state['positions'][a['id']]={'quantity':qty,'cost':cost,'entry_price':price,
                     'entry_session':session,'entry_index':i,'highest_price':price,
-                    'held_sessions':0,'held_as_of':session}
+                    'held_sessions':0,'held_as_of':session, 'advisory_id': ai.get('id') if ai else None}
                 # Stop this session's remaining entries as soon as fill costs breach risk.
                 equity_after_entry = marked_equity(i, 'close')
                 record_drawdown(equity_after_entry)

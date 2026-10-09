@@ -12,6 +12,7 @@ services:
       FREQTRADE__API_SERVER__VERBOSITY: "error"
       FREQTRADE__API_SERVER__ENABLE_OPENAPI: "false"
       FREQTRADE__DRY_RUN: "true"
+      SIMULATION_POLICY_FILE: /freqtrade/user_data/simulation-policy.json
       FREQTRADE__API_SERVER__USERNAME: "${FREQTRADE_UI_USERNAME:?set in private .env}"
       FREQTRADE__API_SERVER__PASSWORD: "${FREQTRADE_UI_PASSWORD:?set in private .env}"
       FREQTRADE__API_SERVER__JWT_SECRET_KEY: "${FREQTRADE_UI_JWT:?set in private .env}"
@@ -19,14 +20,17 @@ services:
     volumes:
       - ./user_data/config.dryrun.json:/freqtrade/user_data/config.dryrun.json:ro
       - ./user_data/strategies:/freqtrade/user_data/strategies:ro
+      - ./supervisor/paper_policy.py:/freqtrade/user_data/strategies/paper_policy.py:ro
+      - ./simulation-policy.json:/freqtrade/user_data/simulation-policy.json:ro
+      - ./user_data/reports:/freqtrade/room-reports:ro
       - ./supervisor/engine_healthcheck.py:/freqtrade/user_data/engine_healthcheck.py:ro
       - freqtrade_runtime:/freqtrade/runtime
     command: >
       trade
       --logfile /freqtrade/runtime/freqtrade.log
-      --db-url sqlite:////freqtrade/runtime/tradesv3.dryrun.sqlite
+      --db-url sqlite:////freqtrade/runtime/trades-market-room-100eur-20261009.dryrun.sqlite
       --config /freqtrade/user_data/config.dryrun.json
-      --strategy MoussaBaseline
+      --strategy MoussaMarketRoom
     healthcheck:
       test: ["CMD", "python", "/freqtrade/user_data/engine_healthcheck.py"]
       interval: 15s
@@ -46,15 +50,18 @@ services:
       - ./user_data/reports:/app/reports
       - /var/lib/jarvis/runtime/trading:/app/jarvis-trading
       - ./supervisor:/app/supervisor:ro
+      - ./simulation-policy.json:/app/simulation-policy.json:ro
     environment:
       FREQTRADE_API_URL: http://freqtrade:8080
       FREQTRADE_API_USERNAME: "${FREQTRADE_UI_USERNAME:?set in private .env}"
       FREQTRADE_API_PASSWORD: "${FREQTRADE_UI_PASSWORD:?set in private .env}"
       SIMULATION_START_BALANCE_EUR: "100"
+      SIMULATION_POLICY_FILE: /app/simulation-policy.json
+      FREQTRADE_DB_NAME: trades-market-room-100eur-20261009.dryrun.sqlite
       RUNTIME_DIR: /app/runtime
       REPORTS_DIR: /app/reports
       JARVIS_REPORT_FILE: /app/jarvis-trading/latest.json
-      ACTIVE_STRATEGY: MoussaBaseline
+      ACTIVE_STRATEGY: MoussaMarketRoom
       STRATEGY_VALIDATION_STATE: research_only
       GITHUB_REPO: mimzyflow/ai-trading-supervisor
       GITHUB_STATUS_ISSUE: "1"
