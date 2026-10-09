@@ -15,6 +15,7 @@ from .governor import Registry
 from .research import cycle, research_scope
 from .equity_paper import load as load_equity_paper, advance as advance_equity_paper, save as save_equity_paper, summary as equity_paper_summary, new_state
 from .fx import collect as collect_fx
+from .equity_live import ERROR_CODES, error_code
 from supervisor.paper_policy import read_policy, advice
 from supervisor.market_context import market_features
 from .engine import TEMPLATES
@@ -88,7 +89,10 @@ def replace_v3_marker(path, previous, current):
 def current_equity_bundle(state, now):
     collection = read_json(state / 'equity_collection.json')
     age = (now - stamp(collection['observed_at'])).total_seconds()
-    if collection.get('state') != 'current' or not 0 <= age <= 900:
+    if collection.get('state') != 'current':
+        code = collection.get('error_code')
+        raise ValueError(code if isinstance(code, str) and code in ERROR_CODES else 'equity_collection_unavailable')
+    if not 0 <= age <= 900:
         raise ValueError('equity_collection_unavailable')
     bundle = read_json(state / 'equities.bundle.json')
     if stamp(bundle['observed_at']) != stamp(collection['observed_at']):
@@ -263,7 +267,10 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
                     status['equities'].update(control=status['equities']['paper'], paper=current)
             except Exception as exc:
                 status['equities'] = {'state': 'invalid_broker_data', 'error_type': type(exc).__name__, 'broker_orders_activated': False}
-                status['errors'].append('equity_collection_' + type(exc).__name__)
+                code = error_code(exc)
+                if code:
+                    status['equities']['error_code'] = code
+                status['errors'].append('equity_collection_' + (code or type(exc).__name__))
         # Factory needs verifiable forward evidence; backtests never satisfy it.
         evidence_file = state / 'forward_growth.json'
         if evidence_file.exists():
