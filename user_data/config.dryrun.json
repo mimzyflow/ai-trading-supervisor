@@ -2,10 +2,10 @@
   "$schema": "https://schema.freqtrade.io/schema.json",
   "trading_mode": "spot",
   "margin_mode": "",
-  "max_open_trades": 2,
+  "max_open_trades": -1,
   "stake_currency": "EUR",
-  "stake_amount": 20,
-  "tradable_balance_ratio": 0.90,
+  "stake_amount": 10,
+  "tradable_balance_ratio": 0.9,
   "fiat_display_currency": "EUR",
   "timeframe": "15m",
   "dry_run": true,
@@ -40,13 +40,25 @@
     "ccxt_config": {},
     "ccxt_async_config": {},
     "pair_whitelist": [
-      "BTC/EUR",
-      "ETH/EUR"
+      "XBT/EUR",
+      "XRP/EUR",
+      "SUI/EUR",
+      "ETH/EUR",
+      "SOL/EUR",
+      "ADA/EUR",
+      "NEAR/EUR",
+      "ZEC/EUR",
+      "QNT/EUR",
+      "LTC/EUR",
+      "TAO/EUR",
+      "LINK/EUR"
     ],
     "pair_blacklist": []
   },
   "pairlists": [
-    {"method": "StaticPairList"}
+    {
+      "method": "StaticPairList"
+    }
   ],
   "telegram": {
     "enabled": false,

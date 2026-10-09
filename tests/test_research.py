@@ -4,6 +4,7 @@ from pathlib import Path
 from scripts.research_run import command, digest
 from scripts.benchmark_metrics import passive_net_return
 from scripts.install_release import restore_files
+from scripts.freqtrade_strategy_audit import commands as audit_commands
 
 
 class ResearchTests(unittest.TestCase):
@@ -46,6 +47,24 @@ class ResearchTests(unittest.TestCase):
         for strategy, pairs, fee in [('Other;trade', ['BTC/EUR'], 0.008), ('MoussaBaseline', ['BTC/USDT'], 0.008), ('MoussaBaseline', ['BTC/EUR'], -1)]:
             with self.assertRaises(ValueError):
                 command(Path('/project'), Path('/data'), Path('/result'), strategy, '20260101-', fee, pairs, '4h')
+
+    def test_v3_audit_is_offline_dry_run_and_predeclared(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            lookahead, recursive = audit_commands(
+                root, root / 'data', root / 'out',
+                'MoussaV3TripleBarrier', '20260101-20260401', 'BTC/EUR'
+            )
+        for argv in [lookahead, recursive]:
+            self.assertIn('--network', argv)
+            self.assertIn('none', argv)
+            self.assertIn('FREQTRADE__DRY_RUN=true', argv)
+            self.assertIn('FREQTRADE__EXCHANGE__KEY=', argv)
+            self.assertNotIn('trade', argv)
+        self.assertIn('lookahead-analysis', lookahead)
+        self.assertIn('recursive-analysis', recursive)
+        with self.assertRaises(ValueError):
+            audit_commands(Path('/x'), Path('/d'), Path('/o'), 'Unknown', '20260101-', 'BTC/EUR')
 
     def test_data_digest_changes_if_data_changes(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -46,7 +46,7 @@ def manifest(root, data, strategy, pairs, timeframe, timerange, fee, membership)
         "timeframe": timeframe, "timerange": timerange, "pairs": pairs,
         "fee_per_side": fee, "round_trip_fee_approx": 2 * fee,
         "protections_enabled": True, "cache": "none", "starting_wallet_eur": 100,
-        "max_open_trades": 2, "stake_eur": 20, "historical_membership_verified": membership,
+        "max_open_trades": -1, "position_count_limit": None, "stake_eur": 10, "historical_membership_verified": membership,
         "slippage_model": "not_modelled_default_backtest", "purpose": "exploratory_only",
         "real_money_eligible": False,
         "data": [{"file": p.name, "sha256": digest(p), "bytes": p.stat().st_size} for p in files],

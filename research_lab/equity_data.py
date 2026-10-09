@@ -1,7 +1,7 @@
 """Pure parsing for a fixed, diagnostic-only equity universe.
 
 Yahoo is one public source, not an independently verified price/action history.
-XNYS regular sessions are used as a documented proxy for SOFI's Nasdaq sessions.
+XNYS regular sessions are used as a documented proxy for regular US sessions.
 No import or function in this module downloads prices or connects to a broker.
 """
 import hashlib
@@ -14,7 +14,9 @@ from zoneinfo import ZoneInfo
 
 from .data import canonical_hash, stamp, validate
 
-SYMBOLS = ('SOFI', 'U')
+# Fixed before each experiment. Broad, liquid, higher-volatility research basket;
+# inclusion is not a recommendation and results may not be used to cherry-pick winners.
+SYMBOLS = ('SOFI', 'U', 'PLUG', 'OPEN', 'FUBO', 'NIO', 'MARA', 'RIOT')
 START_DATE = '2021-06-01'
 END_DATE = '2026-10-02'
 CALENDAR_VERSION = '4.13.2'
@@ -26,7 +28,7 @@ LIMITATIONS = [
     'No announced events does not prove corporate-action history is complete.',
     'Yahoo OHLC may be split-adjusted; any announced action requires review and is refused.',
     'Raw price basis is conditional on no announced actions, not independently certified.',
-    'XNYS regular sessions are a proxy for Nasdaq SOFI; issuer-specific halts are not verified.',
+    'XNYS regular sessions are a proxy for regular US sessions; issuer-specific halts are not verified.',
     'exchange_calendars is a community-maintained schedule, not proof of executable prices.',
     'Historical universe and survivorship are unverified; no broker or real-money eligibility.',
 ]

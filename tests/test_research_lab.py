@@ -84,15 +84,17 @@ class DataAndExecutionTests(unittest.TestCase):
         self.assertEqual(len(result['curve']), 50)
 
     def test_split_does_not_create_or_destroy_wealth(self):
-        data = bundle(prices=[10,5,5,5], asset_class='stock')
-        data['assets'][0]['bars'][1]['split_ratio'] = 2
+        # Session 0 supplies known liquidity; the position exists before split.
+        data = bundle(prices=[10,10,5,5,5], asset_class='stock')
+        data['assets'][0]['bars'][2]['split_ratio'] = 2
         result = simulate(data, {'family': 'buy_hold'}, fee=0, slippage=0, risk_control=False)
         self.assertEqual(result['equity'], 100)
         self.assertEqual(result['trades'][0]['quantity'], 4)
 
     def test_dividend_receivable_does_not_become_spendable_before_payment(self):
-        data = bundle(prices=[10,9,9,9], asset_class='etf')
-        data['assets'][0]['bars'][1].update(dividend_per_share=1, dividend_paid_at='2023-01-01T00:00:00+00:00')
+        # Buy after liquidity warmup and before the dividend entitlement date.
+        data = bundle(prices=[10,10,9,9,9], asset_class='etf')
+        data['assets'][0]['bars'][2].update(dividend_per_share=1, dividend_paid_at='2023-01-01T00:00:00+00:00')
         result = simulate(data, {'family': 'buy_hold'}, fee=0, slippage=0, close_at_end=False, risk_control=False)
         self.assertEqual(result['cash'], 80)
         self.assertEqual(result['receivables'], 2)
@@ -280,7 +282,7 @@ class ResearchProtocolTests(unittest.TestCase):
             with patch('research_lab.research.implementation_hash',return_value='different'):
                 result=cycle(data,reg,datetime(2019,9,2,tzinfo=timezone.utc))
             self.assertEqual(result['state'],'implementation_changed_new_plan_required');reg.close()
-    def test_four_variants_frozen_once_and_future_holdout_waits(self):
+    def test_strategy_variants_frozen_once_and_future_holdout_waits(self):
         with tempfile.TemporaryDirectory() as folder:
             reg=Registry(Path(folder)/'r.sqlite'); data=bundle(count=600,start=datetime(2018,1,1,tzinfo=timezone.utc))
             now=datetime(2019,9,1,tzinfo=timezone.utc)
@@ -290,7 +292,7 @@ class ResearchProtocolTests(unittest.TestCase):
                 first=cycle(data,reg,now);calls=mocked.call_count
                 second=cycle(data,reg,datetime(2019,10,1,tzinfo=timezone.utc))
                 self.assertEqual(mocked.call_count,calls)
-            self.assertEqual(calls,13)
+            self.assertEqual(calls, 1 + 3 * len(TEMPLATES))
             self.assertEqual(first['epoch'],second['epoch'])
             self.assertEqual(second['state'],'awaiting_future_holdout')
             self.assertEqual(reg.db.execute('SELECT COUNT(*) FROM consumed').fetchone()[0],0)
@@ -302,6 +304,16 @@ class ResearchProtocolTests(unittest.TestCase):
             self.assertEqual(result['state'],'insufficient_development_history')
             self.assertFalse(result['real_money_eligible']);reg.close()
 
+
+
+    def test_position_count_is_unbounded_by_default_but_cash_still_limits_exposure(self):
+        data=bundle(count=260)
+        base=data['assets'][0]
+        data['assets']=[{**base, 'id':f'TOY{i}'} for i in range(12)]
+        spec={'family':'buy_hold'}
+        result=simulate(data,spec,initial=100,allocation=10,fee=0,slippage=0,risk_control=False)
+        self.assertGreaterEqual(result['entry_attempts'], 10)
+        self.assertNotIn('max_positions', result)
 
 class PaperBrokerTests(unittest.TestCase):
     def test_paper_sell_can_only_reduce_owned_quantity(self):

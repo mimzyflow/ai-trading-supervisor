@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import re
 import sqlite3
 import tempfile
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ DB = RUNTIME / "tradesv3.dryrun.sqlite"
 LOG = RUNTIME / "freqtrade.log"
 REPORTS = Path(os.environ.get("REPORTS_DIR", str(ROOT / "reports")))
 JARVIS_REPORT_FILE = os.environ.get("JARVIS_REPORT_FILE", "").strip()
+V2_DEPLOYED_AT = "2026-10-05T15:03:00+00:00"
 
 
 def utcnow():
@@ -57,6 +59,45 @@ def read_publication():
         return {"state": "not_configured" if not os.environ.get("GITHUB_STATUS_TOKEN", "").strip() else "pending"}
 
 
+def metric(value, count=False):
+    try:
+        value = number(value)
+        if count and (value < 0 or not value.is_integer()):
+            return None
+        return int(value) if count else round(value, 4)
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+def status_code(value, fallback='unknown'):
+    return value if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_:-]{1,80}', value) else fallback
+
+
+def paper_metrics(value):
+    if not isinstance(value, dict) or value.get('mode') != 'BROKERLESS_PAPER' or value.get('real_money_eligible') is not False:
+        return {'state': 'unavailable'}
+    result = {'state': status_code(value.get('state')), 'mode': 'BROKERLESS_PAPER',
+              'currency': 'USD', 'real_money_eligible': False}
+    for key in ['equity', 'return_pct', 'cash', 'profit_factor', 'max_drawdown_pct', 'win_rate_pct', 'expectancy']:
+        result[key] = metric(value.get(key))
+    for key in ['open_positions', 'closed_trades', 'wins', 'losses']:
+        result[key] = metric(value.get(key), count=True)
+    try:
+        parsed = datetime.fromisoformat(value['last_session'].replace('Z', '+00:00'))
+        result['last_session'] = parsed.isoformat() if parsed.tzinfo else None
+    except (KeyError, ValueError, TypeError, AttributeError):
+        result['last_session'] = None
+    session = result.get('last_session')
+    market_age = (utcnow() - datetime.fromisoformat(session)).total_seconds() if session else None
+    if value.get('state') not in {'paper_active', 'paper_halted'} or market_age is None or not 0 <= market_age <= 96 * 3600:
+        for key in ['equity', 'return_pct', 'cash', 'profit_factor', 'max_drawdown_pct', 'win_rate_pct', 'expectancy', 'open_positions', 'closed_trades', 'wins', 'losses']:
+            result[key] = None
+    result['halt_reason'] = status_code(value.get('halt_reason'), '')
+    result['blocked_reason'] = status_code(value.get('blocked_reason'), '')
+    result['execution_revision'] = status_code(value.get('execution_revision'), '')
+    return result
+
+
 def read_research():
     path = REPORTS / 'autonomy.json'
     try:
@@ -65,7 +106,7 @@ def read_research():
         raw = json.loads(path.read_text())
         if not isinstance(raw, dict) or not isinstance(raw.get('generated_at'), str):
             raise ValueError('invalid_research_status')
-        if any(not isinstance(raw.get(key, {}), dict) for key in ['risk', 'crypto_research', 'equities']):
+        if any(not isinstance(raw.get(key, {}), dict) for key in ['risk', 'crypto_research', 'equities', 'v3_challengers', 'freqai_shadow']):
             raise ValueError('invalid_research_sections')
         observed = datetime.fromisoformat(raw['generated_at'].replace('Z', '+00:00'))
         if observed.tzinfo is None:
@@ -73,10 +114,38 @@ def read_research():
         age = (utcnow() - observed).total_seconds()
         if raw.get('schema_version') != 1 or not 0 <= age <= 900:
             return {'state': 'stale'}
+        equities = raw.get('equities', {})
+        shadows = equities.get('v3_shadow', {})
+        shadows = {name: paper_metrics(value) for name, value in list(shadows.items())[:3]
+                   if name in {'regime_momentum', 'triple_barrier', 'slow_breakout'}} if isinstance(shadows, dict) else {}
+        v3 = raw.get('v3_challengers', {})
+        challengers = v3.get('challengers', {})
+        results = {}
+        if isinstance(challengers, dict):
+            for name, value in list(challengers.items())[:3]:
+                if name not in {'regime_momentum', 'triple_barrier', 'slow_breakout'} or not isinstance(value, dict):
+                    continue
+                result, gate = value.get('result', {}), value.get('gate', {})
+                if not isinstance(result, dict) or not isinstance(gate, dict):
+                    continue
+                reasons = gate.get('reasons', [])
+                results[name] = {key: metric(result.get(key), count=key == 'closed_trades')
+                                 for key in ['return_pct', 'profit_factor', 'max_drawdown_pct', 'closed_trades']}
+                results[name].update(state=status_code(gate.get('state')),
+                                     reasons=[status_code(x) for x in reasons[:12]] if isinstance(reasons, list) else [])
+        errors = raw.get('errors', [])
         return {'state': 'current', 'observed_at': raw['generated_at'],
                 'risk': str(raw.get('risk', {}).get('state', 'unknown'))[:48],
                 'crypto': str(raw.get('crypto_research', {}).get('state', 'unknown'))[:64],
+                'v3_crypto': str(raw.get('v3_challengers', {}).get('state', 'unknown'))[:64],
+                'freqai_shadow': str(raw.get('freqai_shadow', {}).get('state', 'unknown'))[:64],
                 'equities': str(raw.get('equities', {}).get('state', 'unknown'))[:64],
+                'equity_paper': paper_metrics(equities.get('paper')),
+                'equity_v3': shadows, 'v3_results': results,
+                'v3_observed_at': str(v3.get('observed_at') or '')[:64],
+                'sessions': metric(equities.get('sessions'), count=True),
+                'required': metric(equities.get('required'), count=True),
+                'errors': [status_code(x) for x in errors[:10]] if isinstance(errors, list) else [],
                 'broker_orders_activated': False, 'max_bots': 3, 'real_money_eligible': False}
     except (OSError, ValueError, KeyError, TypeError):
         return {'state': 'unavailable', 'broker_orders_activated': False}
@@ -98,6 +167,12 @@ def collect(api=None):
         "observed_max_drawdown_pct": None, "wins": None, "losses": None,
         "last_trades": [], "alerts": [], "activity_note": "", "publication": read_publication(),
         "research": read_research(),
+        "v2": {
+            "deployed_at": V2_DEPLOYED_AT,
+            "baseline_history_excluded": True,
+            "closed_trades": None, "wins": None, "losses": None,
+            "realized_profit_eur": None, "profit_factor": None,
+        },
     }
     if not data["database_found"]:
         data["alerts"].append("Base Freqtrade absente : statistiques indisponibles.")
@@ -109,6 +184,24 @@ def collect(api=None):
                 data.update(total_trades=counts[0], open_trades=counts[1] or 0, closed_trades=counts[2] or 0)
                 result = conn.execute("SELECT COALESCE(SUM(close_profit_abs),0), SUM(CASE WHEN close_profit>0 THEN 1 ELSE 0 END), SUM(CASE WHEN close_profit<=0 THEN 1 ELSE 0 END) FROM trades WHERE is_open=0").fetchone()
                 data.update(realized_profit_eur=round(number(result[0]), 4), wins=result[1] or 0, losses=result[2] or 0)
+                v2 = conn.execute(
+                    """SELECT COUNT(*),
+                              SUM(CASE WHEN close_profit>0 THEN 1 ELSE 0 END),
+                              SUM(CASE WHEN close_profit<=0 THEN 1 ELSE 0 END),
+                              COALESCE(SUM(close_profit_abs),0),
+                              COALESCE(SUM(CASE WHEN close_profit_abs>0 THEN close_profit_abs ELSE 0 END),0),
+                              COALESCE(-SUM(CASE WHEN close_profit_abs<0 THEN close_profit_abs ELSE 0 END),0)
+                       FROM trades
+                       WHERE is_open=0 AND datetime(close_date) >= datetime(?)""",
+                    (V2_DEPLOYED_AT,),
+                ).fetchone()
+                data["v2"].update(
+                    closed_trades=v2[0] or 0,
+                    wins=v2[1] or 0,
+                    losses=v2[2] or 0,
+                    realized_profit_eur=round(number(v2[3]), 4),
+                    profit_factor=round(number(v2[4]) / number(v2[5]), 4) if number(v2[5]) > 0 else None,
+                )
                 rows = conn.execute("SELECT pair,close_profit,close_profit_abs,close_date,exit_reason FROM trades WHERE is_open=0 ORDER BY id DESC LIMIT 5").fetchall()
                 data["last_trades"] = [dict(zip(["pair", "close_profit", "close_profit_abs", "close_date", "exit_reason"], row)) for row in rows]
                 for trade in data["last_trades"]:
@@ -132,7 +225,7 @@ def collect(api=None):
         if data["mode"] != "DRY-RUN":
             data["alerts"].append("CRITIQUE : moteur en mode réel inattendu. Aucune action financière exécutée par le superviseur.")
         scope_ok = config.get("trading_mode") == "spot" and config.get("exchange") == "kraken" and config.get("stake_currency") == "EUR"
-        limits_ok = 0 < number(config.get("max_open_trades")) <= 2 and 0 < number(config.get("stake_amount")) <= 20 and not config.get("force_entry_enable") and -1 < number(config.get("stoploss")) < 0
+        limits_ok = number(config.get("max_open_trades")) == -1 and 0 < number(config.get("stake_amount")) <= 20 and not config.get("force_entry_enable") and -1 < number(config.get("stoploss")) < 0
         data["configuration_safe"] = scope_ok and limits_ok and data["mode"] == "DRY-RUN"
         if not scope_ok:
             data["alerts"].append("Configuration différente du périmètre Kraken spot EUR autorisé.")
@@ -166,8 +259,10 @@ def collect(api=None):
         data["alerts"].append("Télémétrie du moteur indisponible ou invalide : état non vérifié.")
     if data["log_age_minutes"] is None or data["log_age_minutes"] > 20:
         data["alerts"].append("Journal Freqtrade absent ou ancien : vérifier le moteur.")
-    if data["publication"].get("state") in {"not_configured", "failed", "report_failed"}:
+    if data["publication"].get("state") in {"failed", "report_failed"}:
         data["alerts"].append("Publication GitHub : " + str(data["publication"]["state"]) + ". Les rapports locaux restent la source de télémétrie.")
+    if data['research'].get('errors'):
+        data['alerts'].append('Recherche : ' + ', '.join(data['research']['errors']))
     data["healthy"] = data["api_ok"] and data["database_ok"] and data["configuration_safe"] and not data["alerts"]
     if data["api_ok"] and data["database_ok"] and data["total_trades"] == 0 and data["state"] == "active":
         data["activity_note"] = "Bot actif, en attente d'un signal d'entrée conforme à la stratégie."
@@ -182,6 +277,13 @@ def render(data):
     lines = ["# Rapport Freqtrade", "", f"- Généré : {data['generated_at']}", f"- Observation moteur : {data.get('observed_at') or 'non vérifiée'}", f"- Validité : {data.get('max_age_seconds', 900)} secondes ; au-delà, état inconnu.", f"- Mode vérifié : **{data['mode']}**", f"- État : **{data['state']}**", f"- Stratégie : **{data['strategy']}** ({data['strategy_validation_state']})"]
     for label, key in [("Trades ouverts", "open_trades"), ("Trades clôturés", "closed_trades"), ("Valeur simulée EUR", "equity_eur"), ("P/L réalisé EUR", "realized_profit_eur"), ("P/L latent net estimé EUR", "unrealized_profit_eur"), ("P/L total EUR", "total_profit_eur"), ("Rendement sur portefeuille initial %", "total_return_pct"), ("Capital engagé EUR", "committed_capital_eur"), ("Risque théorique au stop, hors frais/glissement EUR", "estimated_stop_risk_eur"), ("Baisse maximale observée depuis suivi %", "observed_max_drawdown_pct")]:
         lines.append("- " + label + " : " + display(data.get(key)))
+    v2 = data.get("v2", {})
+    lines += ["", "## Performance prospective V2 uniquement",
+              "- Frontière : " + str(v2.get("deployed_at", "inconnue")),
+              "- Ancienne MoussaBaseline exclue : " + ("oui" if v2.get("baseline_history_excluded") else "non"),
+              "- Trades clôturés V2 : " + display(v2.get("closed_trades")),
+              "- P/L réalisé V2 EUR : " + display(v2.get("realized_profit_eur")),
+              "- Profit factor V2 : " + display(v2.get("profit_factor"))]
     lines += ["", "## Publication GitHub", "- État : " + str(data.get("publication", {}).get("state", "unknown")), "", "## Alertes"]
     lines += ["- " + str(a) for a in data["alerts"]] or ["- Aucune alerte détectée."]
     if data.get("activity_note"):
@@ -196,6 +298,33 @@ def render(data):
               '- Recherche crypto : ' + str(research.get('crypto', 'indisponible')),
               '- Actions/ETF : ' + str(research.get('equities', 'indisponible')),
               '- Ordres courtier activés : non. Réel éligible : non.']
+    paper = research.get('equity_paper', {})
+    lines += ['', '### Actions prospectives V2 (USD fictifs)',
+              '- État : ' + str(paper.get('state', 'unavailable')),
+              '- Dernière séance traitée : ' + str(paper.get('last_session') or 'indisponible')]
+    for label, key in [('Valeur USD', 'equity'), ('Rendement %', 'return_pct'), ('Cash USD', 'cash'),
+                       ('Positions ouvertes', 'open_positions'), ('Trades clôturés', 'closed_trades'),
+                       ('Baisse maximale %', 'max_drawdown_pct')]:
+        lines.append('- ' + label + ' : ' + display(paper.get(key)))
+    if paper.get('closed_trades') == 0:
+        lines.append('- Zéro transaction : aucune efficacité démontrée.')
+    lines += ['', '### Crypto V3 : recherche historique',
+              '- Calcul source : ' + str(research.get('v3_observed_at') or 'indisponible'),
+              '- Décision : ' + str(research.get('v3_crypto', 'unavailable')),
+              '| Variante | Rendement % | Profit factor | Baisse max % | Clôtures | Décision |',
+              '| --- | ---: | ---: | ---: | ---: | --- |']
+    for name, result in research.get('v3_results', {}).items():
+        lines.append('| ' + name + ' | ' + ' | '.join(display(result.get(k)) for k in ['return_pct', 'profit_factor', 'max_drawdown_pct', 'closed_trades']) + ' | ' + str(result.get('state', 'unknown')) + ' |')
+    for name, result in research.get('v3_results', {}).items():
+        if result.get('reasons'):
+            lines.append('\nRefus ' + name + ' : ' + ', '.join(result['reasons']) + '.\n')
+    lines += ['', '### Actions V3 : portefeuilles prospectifs séparés']
+    for name, shadow in research.get('equity_v3', {}).items():
+        lines.append('- ' + name + ' : ' + display(shadow.get('equity')) + ' USD, ' + display(shadow.get('closed_trades')) + ' clôture(s), état ' + str(shadow.get('state', 'unknown')) + '.')
+    if research.get('sessions') is not None:
+        lines.append('- Historique actions : ' + display(research['sessions']) + ' séances / ' + display(research.get('required')) + ' requises.')
+    if research.get('errors'):
+        lines.append('- Erreurs worker : ' + ', '.join(research['errors']))
     lines += ["", "> Supervision en lecture seule. Les résultats simulés ne constituent pas une validation de rentabilité."]
     return "\n".join(lines) + "\n"
 

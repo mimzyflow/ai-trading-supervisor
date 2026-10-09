@@ -4,14 +4,19 @@ import json
 import os
 import subprocess
 import fcntl
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from supervisor.api import ReadOnlyAPI
 from supervisor.report import atomic_write
-from .collect import fetch_crypto
-from .data import validate
+from .collect import fetch_crypto_broad
+from .data import validate, stamp, canonical_hash
 from .governor import Registry
-from .research import cycle
+from .research import cycle, research_scope
+from .equity_paper import load as load_equity_paper, advance as advance_equity_paper, save as save_equity_paper, summary as equity_paper_summary
+from .engine import TEMPLATES
+from .v3_challengers import CHALLENGERS, evaluate as evaluate_v3_challengers
+from .freqai_shadow import status as freqai_shadow_status
 
 
 def read_json(path, maximum=8_000_000):
@@ -48,6 +53,51 @@ def daily_cycle_required(marker, registry, now):
     return row is not None and row['status'] == 'superseded'
 
 
+def v3_implementation_hash():
+    package = Path(__file__).resolve().parent
+    names = ['engine.py', 'v3_challengers.py', 'robustness.py', 'research.py']
+    return hashlib.sha256(b''.join((package / name).read_bytes() for name in names)).hexdigest()
+
+
+def v3_data_signature(bundle):
+    # These are the simulator's inputs, including asset order (cash allocation
+    # depends on it). Refreshed discovery/provenance metadata is not market data.
+    return {'data_sha256': canonical_hash({key: bundle[key]
+                                          for key in ['schema_version', 'currency', 'assets']}),
+            'scope': research_scope(bundle)}
+
+
+def archive_v3_marker(path, previous):
+    # Research computed with older code/data is evidence, never overwritten.
+    if previous:
+        payload = json.dumps(previous, ensure_ascii=False, sort_keys=True, allow_nan=False)
+        digest = hashlib.sha256(payload.encode()).hexdigest()
+        archived = path.parent / 'archive' / ('v3-' + digest + '.json')
+        if not archived.exists():
+            atomic_write(archived, payload)
+
+
+def replace_v3_marker(path, previous, current):
+    archive_v3_marker(path, previous)
+    atomic_write(path, json.dumps(current, ensure_ascii=False, allow_nan=False))
+
+
+def current_equity_bundle(state, now):
+    collection = read_json(state / 'equity_collection.json')
+    age = (now - stamp(collection['observed_at'])).total_seconds()
+    if collection.get('state') != 'current' or not 0 <= age <= 900:
+        raise ValueError('equity_collection_unavailable')
+    bundle = read_json(state / 'equities.bundle.json')
+    if stamp(bundle['observed_at']) != stamp(collection['observed_at']):
+        raise ValueError('equity_collection_bundle_mismatch')
+    bundle = validate(bundle, now)
+    # Weekends/holidays are allowed; a freshly downloaded obsolete chart is not.
+    market_age = (now - stamp(bundle['assets'][0]['bars'][-1]['close_at'])).total_seconds()
+    if not 0 <= market_age <= 96 * 3600:
+        raise ValueError('equity_market_data_stale')
+    return bundle
+
+
 def verified_stop_simulation(decision, runner=subprocess.run, api_factory=ReadOnlyAPI):
     """A fixed Docker stop command, only after independent current DRY-RUN proof."""
     if decision['state'] not in {'paused_risk', 'retired'}:
@@ -68,7 +118,7 @@ def verified_stop_simulation(decision, runner=subprocess.run, api_factory=ReadOn
     return 'simulation_container_stopped_data_preserved'
 
 
-def once(root, stop=True, now=None, collector=fetch_crypto):
+def once(root, stop=True, now=None, collector=fetch_crypto_broad):
     now = now or datetime.now(timezone.utc)
     state = root / 'research_state'
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -81,7 +131,9 @@ def once(root, stop=True, now=None, collector=fetch_crypto):
     registry = Registry(state / 'registry.sqlite')
     status = {'schema_version': 1, 'generated_at': now.isoformat(), 'mode': 'RESEARCH_AND_PAPER_ONLY',
               'live_orders_supported': False, 'max_bots': 3, 'max_generation': 2,
-              'crypto_research': {}, 'equities': {'state': 'awaiting_broker_data', 'broker_orders_activated': False}, 'errors': []}
+              'crypto_research': {}, 'v3_challengers': {},
+              'freqai_shadow': freqai_shadow_status(),
+              'equities': {'state': 'awaiting_broker_data', 'broker_orders_activated': False}, 'errors': []}
     try:
         report_file = root / 'user_data/reports/latest.json'
         try:
@@ -113,10 +165,37 @@ def once(root, stop=True, now=None, collector=fetch_crypto):
             except Exception as exc:
                 status['errors'].append('crypto_research_' + type(exc).__name__)
         status['crypto_research'] = marker.get('result', {'state': 'data_unavailable'})
+        v3_marker_file = state / 'last_v3_challengers.json'
+        v3_marker = read_daily_marker(v3_marker_file, 'v3_challengers', status['errors'])
+        v3_hash = v3_implementation_hash()
+        v3_signature, v3_cache_matches = None, False
+        try:
+            data_file = state / 'crypto_daily.json'
+            v3_bundle = validate(read_json(data_file), now)
+            v3_signature = v3_data_signature(v3_bundle)
+            v3_cache_matches = (v3_marker.get('implementation_sha256') == v3_hash
+                                and all(v3_marker.get(key) == value for key, value in v3_signature.items()))
+            if daily_cycle_required(v3_marker, registry, now) or not v3_cache_matches:
+                archive_v3_marker(v3_marker_file, v3_marker)
+                result = evaluate_v3_challengers(v3_bundle, now)
+                result.update(v3_signature)
+                updated_marker = {'day': now.date().isoformat(), 'implementation_sha256': v3_hash,
+                                  **v3_signature, 'result': result}
+                replace_v3_marker(v3_marker_file, v3_marker, updated_marker)
+                v3_marker = updated_marker
+                v3_cache_matches = True
+        except Exception as exc:
+            status['errors'].append('v3_challengers_' + type(exc).__name__)
+        status['v3_challengers'] = v3_marker.get('result', {'state': 'data_unavailable'})
+        if not v3_cache_matches:
+            reason = ('implementation_changed_recalculation_required'
+                      if v3_marker.get('implementation_sha256') != v3_hash
+                      else ('data_changed_recalculation_required' if v3_signature else 'data_unavailable'))
+            status['v3_challengers'] = {'state': reason}
         equities_file = state / 'equities.bundle.json'
         if equities_file.exists():
             try:
-                bundle = validate(read_json(equities_file), now)
+                bundle = current_equity_bundle(state, now)
                 if any(a['asset_class'] not in {'stock', 'etf'} for a in bundle['assets']):
                     raise ValueError('equities_data_scope')
                 equity_marker_file = state / 'last_equities.json'
@@ -124,9 +203,29 @@ def once(root, stop=True, now=None, collector=fetch_crypto):
                 if daily_cycle_required(equity_marker, registry, now):
                     equity_marker = {'day': now.date().isoformat(), 'result': cycle(bundle, registry, now)}
                     atomic_write(equity_marker_file, json.dumps(equity_marker, allow_nan=False))
-                status['equities'] = {**equity_marker['result'], 'broker_orders_activated': False}
+                paper_file = state / 'equity_paper.json'
+                paper = load_equity_paper(paper_file, now, last_session=bundle['assets'][0]['bars'][-1]['close_at'])
+                # Forward paper decisions use only sessions present in the current bundle at this observation.
+                paper = advance_equity_paper(bundle, paper, TEMPLATES[0], now=now)
+                save_equity_paper(paper_file, paper)
+                shadows = {}
+                for name, spec in CHALLENGERS.items():
+                    shadow_file = state / ('equity_paper_v3_' + name + '.json')
+                    shadow = load_equity_paper(
+                        shadow_file, now,
+                        last_session=bundle['assets'][0]['bars'][-1]['close_at']
+                    )
+                    shadow = advance_equity_paper(
+                        bundle, shadow, spec, now=now,
+                        allocation=20, reserve_ratio=.30, risk_model=True
+                    )
+                    save_equity_paper(shadow_file, shadow)
+                    shadows[name] = equity_paper_summary(shadow)
+                status['equities'] = {**equity_marker['result'], 'paper': equity_paper_summary(paper),
+                                      'v3_shadow': shadows, 'broker_orders_activated': False}
             except Exception as exc:
                 status['equities'] = {'state': 'invalid_broker_data', 'error_type': type(exc).__name__, 'broker_orders_activated': False}
+                status['errors'].append('equity_collection_' + type(exc).__name__)
         # Factory needs verifiable forward evidence; backtests never satisfy it.
         evidence_file = state / 'forward_growth.json'
         if evidence_file.exists():

@@ -17,7 +17,7 @@ from scripts.check_simulation import validate
 class FakeAPI:
     def __init__(self, values=None, fail=False):
         self.values = values or {
-            "show_config": {"dry_run": True, "state": "running", "strategy": "MoussaBaseline", "version": "test", "timeframe": "15m", "trading_mode": "spot", "exchange": "kraken", "stake_currency": "EUR", "stake_amount": "20", "max_open_trades": 2, "stoploss": -0.04, "force_entry_enable": False},
+            "show_config": {"dry_run": True, "state": "running", "strategy": "MoussaBaseline", "version": "test", "timeframe": "15m", "trading_mode": "spot", "exchange": "kraken", "stake_currency": "EUR", "stake_amount": "10", "max_open_trades": -1, "stoploss": -0.04, "force_entry_enable": False},
             "balance": {"total": 97.0, "starting_capital": 90.0},
             "profit": {"profit_all_coin": -3.0, "profit_closed_coin": 1.0, "trade_count": 2, "closed_trade_count": 1},
             "status": [{"pair": "ETH/EUR", "stake_amount": 20}],
@@ -72,6 +72,17 @@ class SupervisionTests(unittest.TestCase):
         (self.root / 'autonomy.json').write_text(json.dumps(value))
         self.assertEqual(report.read_research()['state'], 'stale')
 
+    def test_v2_metrics_exclude_predeployment_baseline(self):
+        result = report.collect(FakeAPI())
+        self.assertTrue(result["v2"]["baseline_history_excluded"])
+        self.assertEqual(result["v2"]["closed_trades"], 0)
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("INSERT INTO trades VALUES (3,'SOL/EUR',0,-0.02,-0.2,'2026-10-06 12:00:00','trend_exit')")
+        result = report.collect(FakeAPI())
+        self.assertEqual(result["v2"]["closed_trades"], 1)
+        self.assertEqual(result["v2"]["losses"], 1)
+        self.assertAlmostEqual(result["v2"]["realized_profit_eur"], -0.2)
+
     def test_reports_latent_loss_and_full_wallet_denominator(self):
         result = report.collect(FakeAPI())
         self.assertEqual(result["mode"], "DRY-RUN")
@@ -81,7 +92,7 @@ class SupervisionTests(unittest.TestCase):
         self.assertEqual(result["estimated_stop_risk_eur"], 0.8)
         self.assertTrue(healthcheck.check(result))
         self.assertEqual(result["publication"]["state"], "not_configured")
-        self.assertFalse(result["healthy"])
+        self.assertTrue(result["healthy"])
 
     def test_missing_database_is_not_created_or_reported_zero(self):
         self.db.unlink()
@@ -116,7 +127,7 @@ class SupervisionTests(unittest.TestCase):
 
     def test_non_spot_and_excessive_stake_are_rejected(self):
         api = FakeAPI()
-        for overrides in [{"trading_mode": "futures"}, {"stake_amount": "21"}, {"max_open_trades": 3}]:
+        for overrides in [{"trading_mode": "futures"}, {"stake_amount": "21"}, {"max_open_trades": 2}]:
             with self.subTest(overrides=overrides):
                 changed = FakeAPI(api.snapshot())
                 changed.values["show_config"].update(overrides)
