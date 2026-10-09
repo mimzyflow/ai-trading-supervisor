@@ -11,7 +11,7 @@ from unittest.mock import patch
 from supervisor.market_room import build, read_ai, UPSTREAM_COMMIT
 from supervisor.healthcheck import check
 from scripts.install_release import activate_preserving_risk
-from scripts.install_market_room import bridge_environment
+from scripts.install_market_room import bridge_environment, own_runtime
 from integrations.tradingagents_runner import CallBudget, run
 
 
@@ -109,3 +109,18 @@ class MarketRoomTests(unittest.TestCase):
         path.write_text('bad')
         with self.assertRaises(ValueError):
             bridge_environment(path)
+
+    def test_installation_ownership_never_follows_a_link_to_system_python(self):
+        runtime = self.root / 'runtime'
+        runtime.mkdir()
+        target = self.root / 'system-python'
+        target.write_text('system interpreter')
+        link = runtime / 'python'
+        link.symlink_to(target)
+        with patch('scripts.install_market_room.os.chown') as change_owner:
+            own_runtime(runtime, 1234, 1234)
+        self.assertEqual(change_owner.call_count, 2)
+        for call in change_owner.call_args_list:
+            self.assertEqual(call.kwargs, {'follow_symlinks': False})
+            self.assertNotEqual(call.args[0], target)
+        self.assertEqual(target.read_text(), 'system interpreter')

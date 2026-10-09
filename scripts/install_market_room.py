@@ -13,6 +13,13 @@ def bridge_environment(path):
     return 'MARKET_ROOM_BACKEND=jarvis_bridge\nMARKET_ROOM_BRIDGE_TOKEN=' + token + '\n'
 
 
+def own_runtime(runtime, uid, gid):
+    # venv/bin/python points outside runtime. Own the link itself, never its
+    # target (in particular, never change the system Python executable).
+    for path in [runtime] + list(runtime.rglob('*')):
+        os.chown(path, uid, gid, follow_symlinks=False)
+
+
 def install(root, activate=False):
     if os.geteuid() != 0 or root != Path('/home/ubuntu/ai-trading-supervisor'):
         raise ValueError('oracle_authorized_install_only')
@@ -36,8 +43,7 @@ def install(root, activate=False):
                     '-r', str(root / 'integrations/tradingagents-requirements.txt')], check=True)
     subprocess.run([str(python), '-c', 'from integrations.tradingagents_runner import verify_package; verify_package()'], cwd=root, check=True)
     account = pwd.getpwnam('ubuntu')
-    for path in [runtime] + list(runtime.rglob('*')):
-        os.chown(path, account.pw_uid, account.pw_gid)
+    own_runtime(runtime, account.pw_uid, account.pw_gid)
     private = runtime / 'free-provider.env'
     fd = os.open(private, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, 'w') as handle:
