@@ -1,5 +1,11 @@
 # Salle des marchés supervisée
 
+**Nouvelle décision du 9 octobre :** la politique explicite de simulation
+`market-room-100eur-20261009` ajoute 100 EUR par bot, l'influence bornée des avis
+et supprime les stops de perte pour ces deux nouveaux comptes. Voir
+[PAPER_MARKET_ROOM.md](PAPER_MARKET_ROOM.md), qui prévaut sur les règles du
+pilote consultatif initial décrites ci-dessous. Les preuves anciennes restent datées.
+
 TradingAgents est une couche d'analyse consultative séparée des deux moteurs.
 Son code et ses dépendances sont épinglés, dans un environnement Python dédié.
 Source : https://github.com/TauricResearch/TradingAgents, version 0.6.0,

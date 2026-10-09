@@ -11,13 +11,15 @@ from urllib.parse import quote
 try:
     from .api import ReadOnlyAPI, TelemetryError
     from .market_room import build as build_room, render as render_room
+    from .paper_policy import read_policy, advice
 except ImportError:
     from api import ReadOnlyAPI, TelemetryError
     from market_room import build as build_room, render as render_room
+    from paper_policy import read_policy, advice
 
 ROOT = Path(os.environ.get("USER_DATA_DIR", "/app/user_data"))
 RUNTIME = Path(os.environ.get("RUNTIME_DIR", str(ROOT)))
-DB = RUNTIME / "tradesv3.dryrun.sqlite"
+DB = RUNTIME / os.environ.get('FREQTRADE_DB_NAME', 'tradesv3.dryrun.sqlite')
 LOG = RUNTIME / "freqtrade.log"
 REPORTS = Path(os.environ.get("REPORTS_DIR", str(ROOT / "reports")))
 JARVIS_REPORT_FILE = os.environ.get("JARVIS_REPORT_FILE", "").strip()
@@ -97,6 +99,14 @@ def paper_metrics(value):
     result['halt_reason'] = status_code(value.get('halt_reason'), '')
     result['blocked_reason'] = status_code(value.get('blocked_reason'), '')
     result['execution_revision'] = status_code(value.get('execution_revision'), '')
+    if value.get('initial_eur') == 100:
+        result.update(initial_eur=100, equity_eur=metric(value.get('equity_eur')),
+                      return_eur_pct=metric(value.get('return_eur_pct')), funding_usd=metric(value.get('funding_usd')),
+                      fx_usd_per_eur=metric(value.get('fx_usd_per_eur')), fx_date=value.get('fx_date'),
+                      funding_fx_date=value.get('funding_fx_date'), policy_id=status_code(value.get('policy_id')),
+                      loss_limit_pct=None, position_loss_stops=False)
+        if result.get('equity') is None:
+            result.update(equity_eur=None, return_eur_pct=None)
     return result
 
 
@@ -148,6 +158,7 @@ def read_research():
                 'freqai_shadow': str(raw.get('freqai_shadow', {}).get('state', 'unknown'))[:64],
                 'equities': str(raw.get('equities', {}).get('state', 'unknown'))[:64],
                 'equity_paper': paper_metrics(equities.get('paper')),
+                'equity_control': paper_metrics(equities.get('control')),
                 'equity_v3': shadows, 'v3_results': results,
                 'v3_observed_at': str(v3.get('observed_at') or '')[:64],
                 'sessions': metric(equities.get('sessions'), count=True),
@@ -232,7 +243,9 @@ def collect(api=None):
         if data["mode"] != "DRY-RUN":
             data["alerts"].append("CRITIQUE : moteur en mode réel inattendu. Aucune action financière exécutée par le superviseur.")
         scope_ok = config.get("trading_mode") == "spot" and config.get("exchange") == "kraken" and config.get("stake_currency") == "EUR"
-        limits_ok = number(config.get("max_open_trades")) == -1 and 0 < number(config.get("stake_amount")) <= 20 and not config.get("force_entry_enable") and -1 < number(config.get("stoploss")) < 0
+        no_loss_stops = config.get('strategy') == 'MoussaMarketRoom' and read_policy() is not None
+        stop_ok = number(config.get('stoploss')) == -1 if no_loss_stops else -1 < number(config.get('stoploss')) < 0
+        limits_ok = number(config.get("max_open_trades")) == -1 and 0 < number(config.get("stake_amount")) <= 20 and not config.get("force_entry_enable") and stop_ok
         data["configuration_safe"] = scope_ok and limits_ok and data["mode"] == "DRY-RUN"
         if not scope_ok:
             data["alerts"].append("Configuration différente du périmètre Kraken spot EUR autorisé.")
@@ -241,7 +254,10 @@ def collect(api=None):
         total, closed = number(profit["profit_all_coin"]), number(profit["profit_closed_coin"])
         data.update(equity_eur=round(number(balance["total"]), 4), total_profit_eur=round(total, 4), unrealized_profit_eur=round(total - closed, 4), total_return_pct=round(total / initial * 100, 4))
         data["committed_capital_eur"] = round(sum(number(t["stake_amount"]) for t in positions), 4)
-        data["estimated_stop_risk_eur"] = round(data["committed_capital_eur"] * abs(number(config["stoploss"])), 4)
+        data["estimated_stop_risk_eur"] = None if no_loss_stops else round(data["committed_capital_eur"] * abs(number(config["stoploss"])), 4)
+        if no_loss_stops:
+            data['v2'].update(closed_trades=None,wins=None,losses=None,realized_profit_eur=None,profit_factor=None)
+            data['execution_revision'] = 'market_room_no_loss_stops_v1'
         if data["database_ok"] and (int(profit["trade_count"]) != data["total_trades"] or int(profit["closed_trade_count"]) != data["closed_trades"] or abs(closed - data["realized_profit_eur"]) > 0.01):
             data["alerts"].append("Statistiques API/base divergentes : revérifier avant interprétation.")
         if data["engine_state"] != "running":
@@ -274,6 +290,20 @@ def collect(api=None):
     if data["api_ok"] and data["database_ok"] and data["total_trades"] == 0 and data["state"] == "active":
         data["activity_note"] = "Bot actif, en attente d'un signal d'entrée conforme à la stratégie."
     data['market_room'] = build_room(data, REPORTS, now)
+    execution = data['market_room'].get('simulation_execution')
+    if execution:
+        try:
+            try:
+                from .loss_alerts import update
+            except ImportError:
+                from loss_alerts import update
+            events = update(data, REPORTS, now, read_policy())
+            data['market_room']['loss_alerts'] = events
+            for event in events:
+                if event['observed_at'] == now.isoformat():
+                    data['alerts'].append('Perte simulée ' + event['desk'] + ' : seuil ' + str(event['loss_level_pct']) + ' %, surveillance sans arrêt.')
+        except (ValueError,OSError,KeyError,TypeError):
+            data['alerts'].append('Journal des alertes de pertes indisponible : surveillance à vérifier.')
     return data
 
 
@@ -307,7 +337,7 @@ def render(data):
               '- Actions/ETF : ' + str(research.get('equities', 'indisponible')),
               '- Ordres courtier activés : non. Réel éligible : non.']
     paper = research.get('equity_paper', {})
-    lines += ['', '### Actions prospectives V2 (USD fictifs)',
+    lines += ['', '### ' + ('Actions IA : 100 EUR financés en USD fictifs' if paper.get('initial_eur') == 100 else 'Actions prospectives V2 (USD fictifs)'),
               '- État : ' + str(paper.get('state', 'unavailable')),
               '- Dernière séance traitée : ' + str(paper.get('last_session') or 'indisponible')]
     for label, key in [('Valeur USD', 'equity'), ('Rendement %', 'return_pct'), ('Cash USD', 'cash'),
@@ -316,6 +346,9 @@ def render(data):
         lines.append('- ' + label + ' : ' + display(paper.get(key)))
     if paper.get('closed_trades') == 0:
         lines.append('- Zéro transaction : aucune efficacité démontrée.')
+    control = research.get('equity_control', {})
+    if control:
+        lines.append('- Ancien témoin conservé : ' + display(control.get('equity')) + ' USD, ' + display(control.get('closed_trades')) + ' clôture(s).')
     lines += ['', '### Crypto V3 : recherche historique',
               '- Calcul source : ' + str(research.get('v3_observed_at') or 'indisponible'),
               '- Décision : ' + str(research.get('v3_crypto', 'unavailable')),

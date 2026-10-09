@@ -3,6 +3,10 @@
 No broker, exchange mutation, strategy or portfolio writer is imported here.
 """
 import json
+try:
+    from .paper_policy import read_policy, advice
+except ImportError:
+    from paper_policy import read_policy, advice
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,12 +22,14 @@ def fresh(value, now, limit):
         return False
 
 
-def read_ai(reports, now):
+def read_ai(reports, now, expected_policy=None):
     try:
         path = Path(reports) / 'tradingagents.json'
         if path.stat().st_size > 20000:
             raise ValueError('large_ai_report')
         raw = json.loads(path.read_text())
+        if expected_policy and raw.get('policy_id') != expected_policy:
+            return {'state':'previous_policy','analyses':[]}
         if (raw.get('schema_version') != 1 or raw.get('upstream_commit') != UPSTREAM_COMMIT
                 or raw.get('can_trade') is not False or raw.get('budget_eur') != 0):
             raise ValueError('invalid_ai_report')
@@ -66,7 +72,7 @@ def build(report, reports, now=None):
         decisions.append('equity_rolling_2y_below_600_sessions')
     if research.get('v3_crypto') == 'all_rejected':
         decisions.append('no_v3_candidate_validated')
-    return {'schema_version': 1, 'observed_at': report['generated_at'], 'mode': 'ADVISORY_ONLY',
+    room = {'schema_version': 1, 'observed_at': report['generated_at'], 'mode': 'ADVISORY_ONLY',
             'upstream': 'TauricResearch/TradingAgents', 'upstream_version': '0.6.0',
             'upstream_commit': UPSTREAM_COMMIT, 'can_trade': False, 'budget_eur': 0,
             'approval_required': True, 'desks': {
@@ -75,16 +81,34 @@ def build(report, reports, now=None):
                 'research': {'state': 'rejected' if research.get('v3_crypto') == 'all_rejected' else 'unverified'},
                 'risk': {'state': 'human_review_required' if halted else ('monitoring' if crypto_ok else 'unverified')}},
             'decisions': decisions, 'ai': read_ai(reports, now)}
+    policy = read_policy()
+    if policy and (report.get('strategy') == 'MoussaMarketRoom' or paper.get('policy_id') == policy['id']):
+        room['simulation_execution'] = {'policy_id':policy['id'], 'mode':'SIMULATION_ONLY',
+            'initial_eur_per_bot':100, 'portfolio_loss_limit_pct':None, 'position_loss_stops':False,
+            'human_authorized':True, 'crypto_advisory':advice(reports,'CRYPTO-EUR',now,policy),
+            'equities_advisory':advice(reports,'ACTIONS-USD',now,policy)}
+        room['ai'] = read_ai(reports,now,policy['id'])
+    return room
 
 
 def render(room):
     labels = {'crypto': 'Crypto (EUR)', 'equities': 'Actions (USD)', 'research': 'Recherche historique', 'risk': 'Risque indépendant'}
-    lines = ['# Salle des marchés supervisée', '', '- TradingAgents 0.6.0, analyse consultative uniquement.',
-             '- Budget IA : 0 EUR. Aucun avis ne modifie un ordre, une stratégie ou un état financier.',
+    executing = bool(room.get('simulation_execution'))
+    lines = ['# Salle des marchés supervisée', '',
+             '- TradingAgents 0.6.0, avis appliqués aux simulations autorisées.' if executing else '- TradingAgents 0.6.0, analyse consultative uniquement.',
+             '- Budget IA propre : 0 EUR. Aucun ordre réel.' if executing else '- Budget IA : 0 EUR. Aucun avis ne modifie un ordre, une stratégie ou un état financier.',
              '- Observation : ' + room['observed_at']]
     lines += ['- ' + labels[name] + ' : ' + room['desks'][name]['state'] for name in DESKS]
     lines += ['', '## Points à examiner'] + ['- ' + value for value in room['decisions']]
     lines += ['', '## Analyses IA', '- État : ' + room['ai']['state']]
+    if room.get('simulation_execution'):
+        execution = room['simulation_execution']
+        lines += ['', '## Portefeuilles autorisés en simulation', '- Capital initial : 100 EUR par bot.',
+                  '- Aucun arrêt de perte du portefeuille ni stop de perte par position. Alertes conservées.',
+                  '- Crypto : ' + execution['crypto_advisory']['state'],
+                  '- Actions : ' + execution['equities_advisory']['state'],
+                  '- Avis appliqués : Buy ×2, Overweight ×1,5, Hold ×1, Underweight ×0,5, Sell bloque les entrées et demande une sortie.',
+                  '- Analyse absente, périmée ou échouée : stratégie technique de base, état fallback explicite.']
     for item in room['ai'].get('analyses', []):
         lines.append('- ' + item['ticker'] + ' : ' + item['state'] + ' / ' + item['rating'] + '. Avis à vérifier, pas un ordre.')
     lines.append('\nLes avis utilisent les rapports des bots. EUR et USD ne sont jamais cumulés. Zéro transaction ne démontre aucune rentabilité.\n')

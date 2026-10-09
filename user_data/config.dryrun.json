@@ -83,6 +83,6 @@
     "process_throttle_secs": 5,
     "heartbeat_interval": 60
   },
-  "strategy": "MoussaBaseline",
+  "strategy": "MoussaMarketRoom",
   "strategy_path": "user_data/strategies/"
 }

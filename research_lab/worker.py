@@ -13,7 +13,10 @@ from .collect import fetch_crypto_broad
 from .data import validate, stamp, canonical_hash
 from .governor import Registry
 from .research import cycle, research_scope
-from .equity_paper import load as load_equity_paper, advance as advance_equity_paper, save as save_equity_paper, summary as equity_paper_summary
+from .equity_paper import load as load_equity_paper, advance as advance_equity_paper, save as save_equity_paper, summary as equity_paper_summary, new_state
+from .fx import collect as collect_fx
+from supervisor.paper_policy import read_policy, advice
+from supervisor.market_context import market_features
 from .engine import TEMPLATES
 from .v3_challengers import CHALLENGERS, evaluate as evaluate_v3_challengers
 from .freqai_shadow import status as freqai_shadow_status
@@ -129,15 +132,17 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
         lock.close()
         return {'state': 'already_running'}
     registry = Registry(state / 'registry.sqlite')
+    policy = read_policy(root)
     status = {'schema_version': 1, 'generated_at': now.isoformat(), 'mode': 'RESEARCH_AND_PAPER_ONLY',
               'live_orders_supported': False, 'max_bots': 3, 'max_generation': 2,
               'crypto_research': {}, 'v3_challengers': {},
               'freqai_shadow': freqai_shadow_status(),
               'equities': {'state': 'awaiting_broker_data', 'broker_orders_activated': False}, 'errors': []}
+    contexts = {'crypto': [], 'equities': []}
     try:
         report_file = root / 'user_data/reports/latest.json'
         try:
-            decision = registry.assess(read_json(report_file), now)
+            decision = registry.assess(read_json(report_file), now, loss_limit=None if policy else .05)
             status['risk'] = {**decision, 'observation_verified': True}
         except Exception as exc:
             stored_state = registry.db.execute("SELECT status FROM bots WHERE id='root'").fetchone()[0]
@@ -179,6 +184,7 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
         try:
             data_file = state / 'crypto_daily.json'
             v3_bundle = validate(read_json(data_file), now)
+            contexts['crypto'] = market_features(v3_bundle, now)
             v3_signature = v3_data_signature(v3_bundle)
             v3_cache_matches = (v3_marker.get('implementation_sha256') == v3_hash
                                 and all(v3_marker.get(key) == value for key, value in v3_signature.items()))
@@ -203,6 +209,7 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
         if equities_file.exists():
             try:
                 bundle = current_equity_bundle(state, now)
+                contexts['equities'] = market_features(bundle, now)
                 if any(a['asset_class'] not in {'stock', 'etf'} for a in bundle['assets']):
                     raise ValueError('equities_data_scope')
                 equity_marker_file = state / 'last_equities.json'
@@ -230,6 +237,30 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
                     shadows[name] = equity_paper_summary(shadow)
                 status['equities'] = {**equity_marker['result'], 'paper': equity_paper_summary(paper),
                                       'v3_shadow': shadows, 'broker_orders_activated': False}
+                if policy:
+                    fx = collect_fx(state / 'eur-usd.json', now)
+                    funded_file = state / ('equity_' + policy['id'] + '.json')
+                    if funded_file.exists():
+                        funded = load_equity_paper(funded_file, now)
+                    else:
+                        funded = new_state(now, initial=100 * fx['usd_per_eur'],
+                                           last_session=bundle['assets'][0]['bars'][-1]['close_at'])
+                        funded.update(policy_id=policy['id'], initial_eur=100,
+                                      funding_fx=fx, funded_at=now.isoformat())
+                    ai = advice(root / 'user_data/reports', 'ACTIONS-USD', now, policy)
+                    funded = advance_equity_paper(bundle, funded, TEMPLATES[0], now=now,
+                        max_drawdown=None, loss_stops=False, allocation=10 * fx['usd_per_eur'],
+                        advisory=ai, execution_revision='market_room_no_loss_stops_v1')
+                    funded.update(advisory=ai, loss_limit_pct=None, position_loss_stops=False)
+                    save_equity_paper(funded_file, funded)
+                    current = equity_paper_summary(funded)
+                    current.update(initial_eur=100, equity_eur=round(funded['equity']/fx['usd_per_eur'],4),
+                                   return_eur_pct=round((funded['equity']/fx['usd_per_eur']/100-1)*100,4),
+                                   funding_usd=round(funded['initial_cash'],4), funding_fx_date=funded['funding_fx']['date'],
+                                   fx_usd_per_eur=fx['usd_per_eur'], fx_date=fx['date'],
+                                   policy_id=policy['id'], funded_at=funded['funded_at'], advisory=ai,
+                                   loss_limit_pct=None, position_loss_stops=False)
+                    status['equities'].update(control=status['equities']['paper'], paper=current)
             except Exception as exc:
                 status['equities'] = {'state': 'invalid_broker_data', 'error_type': type(exc).__name__, 'broker_orders_activated': False}
                 status['errors'].append('equity_collection_' + type(exc).__name__)
@@ -242,6 +273,9 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
             except Exception as exc:
                 status['factory'] = {'state': 'not_eligible', 'error_type': type(exc).__name__}
         status['bots'] = registry.bots()
+        atomic_write(root / 'user_data/reports/market-context.json', json.dumps(
+            {'schema_version': 1, 'generated_at': now.isoformat(),
+             'policy_id': policy['id'] if policy else None, **contexts}, allow_nan=False))
         atomic_write(root / 'user_data/reports/autonomy.json', json.dumps(status, ensure_ascii=False, indent=2, allow_nan=False))
         print(json.dumps({k: status[k] for k in ['generated_at', 'mode', 'risk', 'equities', 'errors']}, ensure_ascii=False))
         return status
