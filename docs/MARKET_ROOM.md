@@ -27,35 +27,40 @@ bornés ; les textes des modèles ne deviennent jamais des instructions d'outil.
 
 ## Coût et limites
 
-Le connecteur accepte seulement l'accès Gemini déjà présent dans Jarvis et
-explicitement marqué gratuit, sans secours payant. La présence de ce marqueur
-n'est pas une nouvelle vérification de la facturation du compte fournisseur.
-Absence du marqueur/de la clé, refus ou quota atteint : analyse indisponible.
-Les variables privées restent dans `.runtime/`, jamais dans Git.
+L'intégration utilise le pont de raisonnement Jarvis existant, loopback
+`127.0.0.1:20129`, déjà employé par Hermes. Les clés fournisseurs, routage,
+cooldowns et plafonds de consommation restent dans Jarvis. Le connecteur
+n'obtient que le jeton de ce pont, privé dans `.runtime/`. Il ne peut exécuter
+aucun outil. Aucun fournisseur ou secours payant supplémentaire n'est activé.
+Le budget de cette intégration est fixé à 0 EUR ; cela n'est pas un audit de
+la facture du compte fournisseur existant. Le modèle final derrière le relais
+n'est pas attesté par ce pilote (`actual_upstream_model_verified=false`).
 
-Pilote fixe : **BTC-USD et SOFI**, un seul passage quotidien après clôture,
-20:20 UTC. Il ne couvre pas encore chaque actif de l'univers des bots.
-Maximum 16 appels par instrument, 240 000 caractères de contexte cumulés,
-1 024 tokens de sortie par appel, un tour de débat/risque/outils, zéro retry
-SDK et 180 secondes maximum par instrument. La tentative est réservée avant
-calcul ; un échec consomme aussi la journée. Les prompts et mémoires internes
-sont temporaires, isolés par run ; aucun apprentissage automatique ne change
-une stratégie. Les SDK restent confinés au processus dédié.
+**Adaptation au projet, pas lancement de la CLI de trading amont** : les agents
+haussier, baissier, directeur de recherche, trader consultatif, trois
+contradicteurs de risque et gérant de TradingAgents travaillent sur les
+rapports vérifiés des deux desks, **CRYPTO-EUR et ACTIONS-USD**. Les métriques
+indisponibles restent nulles et les checkpoints sont datés. Aucun flux
+indépendant de nouvelles, fondamentaux ou sentiment n'est ajouté ; les agents
+reçoivent explicitement ces absences. Aucun compte vide n'est inventé.
 
-BTC-USD est une analyse externe en USD, pas la mesure du compte Kraken EUR.
-Le portefeuille n'est pas transmis : aucun compte n'est supposé vide et aucune
-conversion EUR/USD n'est inventée. Les données Yahoo/news du framework peuvent
-inclure la séance en cours lors d'un essai manuel avant clôture. Les dates
-d'analyse et la dernière séance clôturée du bot sont distinctes. Ce pilote
-n'effectue aucun backtest IA ni calcul de performance de ses avis. Un avis
-Buy/Sell n'est pas un ordre et ne devient pas une nouvelle stratégie.
+Une tentative quotidienne à 20:20 UTC après clôture US, deux analyses au plus,
+16 appels maximum par desk, 240 000 caractères cumulés, 180 secondes par desk,
+35 secondes par appel, un tour de débat et de risque, zéro retry du connecteur.
+Les limites du routeur Jarvis existant s'appliquent aussi ; une saturation
+produit un état indisponible. Les réponses conservées dans le graphe sont
+bornées à 6 000 caractères, les extraits des rôles à 700 caractères. Le pont
+utilise les bornes de sortie de Jarvis, pas une promesse de 1 024 tokens par
+appel. Une tentative échouée consomme également le jour ; les anciennes
+preuves sont archivées. Prompts/mémoires amont temporaires, aucun apprentissage
+ni changement automatique de stratégie. Les données brutes restent hors Git.
 
-Les extraits de rôle sont bornés à 700 caractères ; les avis doivent être
-recoupés avec les sources avant décision humaine. Aucun résultat IA ne remplace
-les coûts stressés, fenêtres indépendantes et 126 séances futures requises.
-L'historique actions actuel est une fenêtre glissante de deux ans : attendre
-ne suffit pas pour atteindre 600 séances. Étendre cet historique et examiner
-ses biais reste une tâche distincte ; aucun gel antérieur n'est antidaté.
+Les avis Buy/Sell sont consultatifs, jamais envoyés aux moteurs. Ils ne
+remplacent ni les coûts stressés, ni les fenêtres indépendantes, ni les 126
+séances futures requises. Aucun backtest IA ou gain causé par l'IA n'est
+revendiqué. L'historique actions reste une fenêtre glissante de deux ans :
+attendre ne suffit pas pour atteindre 600 séances. Son extension et ses biais
+restent une tâche distincte ; aucun gel antérieur n'est antidaté.
 
 ## Arrêt existant et installation
 

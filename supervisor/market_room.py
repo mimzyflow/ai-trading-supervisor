@@ -31,14 +31,14 @@ def read_ai(reports, now):
             return {'state': 'stale', 'analyses': []}
         analyses = []
         for item in raw.get('analyses', [])[:2]:
-            if not isinstance(item, dict) or item.get('ticker') not in {'BTC-USD', 'SOFI'}:
+            if not isinstance(item, dict) or item.get('ticker') not in {'CRYPTO-EUR', 'ACTIONS-USD'}:
                 continue
             # LLM text stays in the private source file. Only typed, bounded
             # status/rating crosses the general telemetry interface.
             state = item.get('state') if item.get('state') in {'complete', 'failed', 'budget_exceeded'} else 'invalid'
             rating = item.get('rating') if item.get('rating') in {'Buy', 'Overweight', 'Hold', 'Underweight', 'Sell', 'REVIEW'} else 'REVIEW'
             as_of = item.get('as_of') if fresh(item.get('as_of'), now, 96 * 3600) else None
-            analyses.append({'ticker': item['ticker'], 'quote_currency': 'USD', 'state': state,
+            analyses.append({'ticker': item['ticker'], 'quote_currency': 'EUR' if item['ticker'] == 'CRYPTO-EUR' else 'USD', 'state': state,
                              'rating': rating if state == 'complete' and as_of else 'REVIEW',
                              'as_of': as_of,
                              'calls': item.get('calls') if type(item.get('calls')) is int and 0 <= item['calls'] <= 16 else None})
@@ -86,6 +86,6 @@ def render(room):
     lines += ['', '## Points à examiner'] + ['- ' + value for value in room['decisions']]
     lines += ['', '## Analyses IA', '- État : ' + room['ai']['state']]
     for item in room['ai'].get('analyses', []):
-        lines.append('- ' + item['ticker'] + ' (USD, contexte externe) : ' + item['state'] + ' / ' + item['rating'] + '. Avis à vérifier, pas un ordre.')
-    lines.append('\nBTC-USD ne mesure pas le portefeuille Kraken EUR. Zéro transaction ne démontre aucune rentabilité.\n')
+        lines.append('- ' + item['ticker'] + ' : ' + item['state'] + ' / ' + item['rating'] + '. Avis à vérifier, pas un ordre.')
+    lines.append('\nLes avis utilisent les rapports des bots. EUR et USD ne sont jamais cumulés. Zéro transaction ne démontre aucune rentabilité.\n')
     return '\n'.join(lines)

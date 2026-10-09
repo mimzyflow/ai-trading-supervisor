@@ -11,7 +11,7 @@ from unittest.mock import patch
 from supervisor.market_room import build, read_ai, UPSTREAM_COMMIT
 from supervisor.healthcheck import check
 from scripts.install_release import activate_preserving_risk
-from scripts.install_market_room import provider_environment
+from scripts.install_market_room import bridge_environment
 from integrations.tradingagents_runner import CallBudget, run
 
 
@@ -46,7 +46,7 @@ class MarketRoomTests(unittest.TestCase):
 
     def test_ai_stale_unsafe_or_changed_revision_never_presents_a_rating(self):
         raw = {'schema_version': 1, 'generated_at': self.now.isoformat(), 'upstream_commit': UPSTREAM_COMMIT,
-               'can_trade': False, 'budget_eur': 0, 'analyses': [{'ticker': 'SOFI', 'rating': 'Buy',
+               'can_trade': False, 'budget_eur': 0, 'analyses': [{'ticker': 'ACTIONS-USD', 'rating': 'Buy',
                   'state': 'complete', 'as_of': self.now.isoformat(), 'secret': 'sentinel'}]}
         for update, state in [({'generated_at': (self.now - timedelta(hours=37)).isoformat()}, 'stale'),
                               ({'can_trade': True}, 'not_configured'), ({'upstream_commit': 'wrong'}, 'not_configured')]:
@@ -64,16 +64,16 @@ class MarketRoomTests(unittest.TestCase):
         def runner(ticker, as_of, runtime):
             calls.append(ticker)
             return {'ticker': ticker, 'as_of': as_of, 'state': 'failed', 'rating': 'REVIEW'}
-        with patch.dict(os.environ, {'GEMINI_FREE_TIER_VERIFIED': '1', 'GOOGLE_API_KEY': 'synthetic'}):
+        with patch.dict(os.environ, {'MARKET_ROOM_BACKEND': 'jarvis_bridge', 'MARKET_ROOM_BRIDGE_TOKEN': 'synthetic-token-1234567890'}):
             result = run(self.root, self.now, runner)
             self.assertEqual(run(self.root, self.now, runner)['state'], 'daily_budget_consumed')
-        self.assertEqual(calls, ['BTC-USD', 'SOFI'])
+        self.assertEqual(calls, ['CRYPTO-EUR', 'ACTIONS-USD'])
         self.assertEqual(result['budget_eur'], 0)
         self.assertFalse(result['can_trade'])
         self.assertEqual(next((self.reports / 'tradingagents-archive').iterdir()).read_text(), 'previous evidence')
 
     def test_absent_free_confirmation_never_calls_provider(self):
-        with patch.dict(os.environ, {'GEMINI_FREE_TIER_VERIFIED': '0'}, clear=True):
+        with patch.dict(os.environ, {}, clear=True):
             with patch('integrations.tradingagents_runner.run_child') as provider:
                 self.assertEqual(run(self.root, self.now)['state'], 'not_configured')
                 provider.assert_not_called()
@@ -100,12 +100,12 @@ class MarketRoomTests(unittest.TestCase):
                 activate_preserving_risk(['docker','compose'], ['-d'], self.root)
             runner.assert_not_called()
 
-    def test_only_existing_free_key_is_selected_without_other_secrets(self):
-        path = self.root / 'provider.env'
-        path.write_text('GEMINI_FREE_TIER_VERIFIED=1\nGEMINI_API_KEY=existing-key\nOTHER_SECRET=sentinel\n')
-        result = provider_environment(path)
-        self.assertNotIn('sentinel', result)
-        self.assertIn('GOOGLE_API_KEY=existing-key', result)
-        path.write_text('GEMINI_FREE_TIER_VERIFIED=0\nGEMINI_API_KEY=existing-key\n')
+    def test_only_existing_reasoning_gateway_token_is_selected(self):
+        path = self.root / 'bridge-token'
+        path.write_text('synthetic-bridge-token-1234567890')
+        result = bridge_environment(path)
+        self.assertNotIn('GOOGLE_API_KEY', result)
+        self.assertIn('MARKET_ROOM_BACKEND=jarvis_bridge', result)
+        path.write_text('bad')
         with self.assertRaises(ValueError):
-            provider_environment(path)
+            bridge_environment(path)
