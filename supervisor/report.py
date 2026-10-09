@@ -10,8 +10,10 @@ from urllib.parse import quote
 
 try:
     from .api import ReadOnlyAPI, TelemetryError
+    from .market_room import build as build_room, render as render_room
 except ImportError:
     from api import ReadOnlyAPI, TelemetryError
+    from market_room import build as build_room, render as render_room
 
 ROOT = Path(os.environ.get("USER_DATA_DIR", "/app/user_data"))
 RUNTIME = Path(os.environ.get("RUNTIME_DIR", str(ROOT)))
@@ -134,7 +136,12 @@ def read_research():
                 results[name].update(state=status_code(gate.get('state')),
                                      reasons=[status_code(x) for x in reasons[:12]] if isinstance(reasons, list) else [])
         errors = raw.get('errors', [])
+        risk = raw.get('risk', {})
+        risk_control = {key: status_code(risk.get(key)) for key in ['state', 'reason', 'stop_result']}
+        risk_control['recorded_at'] = risk.get('recorded_at') if isinstance(risk.get('recorded_at'), str) and len(risk['recorded_at']) <= 64 else None
+        risk_control['last_verified_equity_eur'] = metric(risk.get('last_verified_equity_eur'))
         return {'state': 'current', 'observed_at': raw['generated_at'],
+                'risk_control': risk_control,
                 'risk': str(raw.get('risk', {}).get('state', 'unknown'))[:48],
                 'crypto': str(raw.get('crypto_research', {}).get('state', 'unknown'))[:64],
                 'v3_crypto': str(raw.get('v3_challengers', {}).get('state', 'unknown'))[:64],
@@ -266,6 +273,7 @@ def collect(api=None):
     data["healthy"] = data["api_ok"] and data["database_ok"] and data["configuration_safe"] and not data["alerts"]
     if data["api_ok"] and data["database_ok"] and data["total_trades"] == 0 and data["state"] == "active":
         data["activity_note"] = "Bot actif, en attente d'un signal d'entrée conforme à la stratégie."
+    data['market_room'] = build_room(data, REPORTS, now)
     return data
 
 
@@ -325,6 +333,14 @@ def render(data):
         lines.append('- Historique actions : ' + display(research['sessions']) + ' séances / ' + display(research.get('required')) + ' requises.')
     if research.get('errors'):
         lines.append('- Erreurs worker : ' + ', '.join(research['errors']))
+    risk = research.get('risk_control', {})
+    if risk.get('state') in {'paused_risk', 'retired'}:
+        lines += ['', '## Arrêt de risque conservé', '- État : ' + risk['state'],
+                  '- Motif : ' + str(risk.get('reason')), '- Décision enregistrée : ' + str(risk.get('recorded_at')),
+                  '- Dernière valeur vérifiée lors de cet arrêt, pas une valeur actuelle : ' + display(risk.get('last_verified_equity_eur')) + ' EUR.',
+                  '- Une reprise nécessite une décision humaine distincte.']
+    if data.get('market_room'):
+        lines += ['', render_room(data['market_room'])]
     lines += ["", "> Supervision en lecture seule. Les résultats simulés ne constituent pas une validation de rentabilité."]
     return "\n".join(lines) + "\n"
 
@@ -335,8 +351,14 @@ def main():
     payload = json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False)
     atomic_write(REPORTS / "latest.md", markdown)
     atomic_write(REPORTS / "latest.json", payload)
+    atomic_write(REPORTS / 'market-room.md', render_room(data['market_room']))
     if JARVIS_REPORT_FILE:
         atomic_write(Path(JARVIS_REPORT_FILE), payload)
+        ai_file = REPORTS / 'tradingagents.json'
+        # General telemetry excludes model prose. A separate, fixed private
+        # file supports an authenticated plain-text advisory report in Jarvis.
+        if data['market_room']['ai']['state'] == 'current' and ai_file.stat().st_size <= 20000:
+            atomic_write(Path(JARVIS_REPORT_FILE).parent / 'room-analysis.json', ai_file.read_text())
     if os.environ.get("REPORT_ARCHIVE", "1") == "1":
         atomic_write(REPORTS / (utcnow().strftime("%Y%m%d-%H%M") + ".md"), markdown)
     print(markdown)

@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily supervised market room, simulation advice only
+
+[Timer]
+OnCalendar=*-*-* 20:20:00 UTC
+Persistent=false
+Unit=trading-market-room.service
+
+[Install]
+WantedBy=timers.target

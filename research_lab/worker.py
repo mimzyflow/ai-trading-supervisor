@@ -151,6 +151,13 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
         except Exception as exc:
             status['risk'].update(stop_result='verification_or_stop_failed', stop_error_type=type(exc).__name__)
             status['errors'].append('risk_stop_' + type(exc).__name__)
+        # A durable stop is a decision, not an API outage. Preserve the last
+        # verified risk checkpoint independently of the now-stopped engine.
+        event = registry.db.execute("SELECT at,payload FROM events WHERE type='risk_state' ORDER BY id DESC LIMIT 1").fetchone()
+        if event and status['risk']['state'] in {'paused_risk', 'retired'}:
+            checkpoint = json.loads(event['payload'])
+            status['risk'].update(recorded_at=event['at'], reason=checkpoint.get('reason'),
+                                  last_verified_equity_eur=checkpoint.get('equity'))
         marker_file = state / 'last_daily.json'
         marker = read_daily_marker(marker_file, 'crypto_research', status['errors'])
         if daily_cycle_required(marker, registry, now):

@@ -2,6 +2,7 @@
 import hashlib
 import json
 import shutil
+import sqlite3
 import subprocess
 import tarfile
 from datetime import datetime, timezone
@@ -34,6 +35,29 @@ def preflight_simulation_compose(compose):
 def activate_simulation(compose, arguments):
     preflight_simulation_compose(compose)
     run(compose + ['up'] + arguments)
+
+
+def risk_halted(root):
+    path = root / 'research_state/registry.sqlite'
+    if not path.exists():
+        return False
+    # An unreadable existing registry must stop deployment, never imply consent
+    # to resume a halted simulation. Registry and portfolios remain untouched.
+    with sqlite3.connect('file:' + str(path) + '?mode=ro', uri=True) as db:
+        row = db.execute("SELECT status FROM bots WHERE id='root'").fetchone()
+    if not row:
+        raise ValueError('risk_registry_missing_root')
+    return row[0] in {'paused_risk', 'retired'}
+
+
+def activate_preserving_risk(compose, arguments, root):
+    preflight_simulation_compose(compose)
+    if risk_halted(root):
+        # Explicit service + no-deps prevents Compose from reviving Freqtrade.
+        run(compose + ['up'] + arguments + ['--force-recreate', '--no-deps', 'supervisor'])
+        return True
+    run(compose + ['up'] + arguments)
+    return False
 
 
 def restore_files(root, backup, files, existed):
@@ -100,17 +124,22 @@ def install(params):
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(stage / relative, destination)
         (root / 'build-info.json').write_text(json.dumps({**params, 'deployed_at': datetime.now(timezone.utc).isoformat(), 'backup': str(backup)}, indent=2))
-        activate_simulation(compose, ['-d', '--wait', '--wait-timeout', '120'])
+        install_research_units(root)
+        run(['docker', 'exec', 'ai-trading-supervisor', 'python', 'supervisor/report.py'], capture_output=True, timeout=45)
+        halted = activate_preserving_risk(compose, ['-d', '--wait', '--wait-timeout', '120'], root)
         containers = json.loads(run(['docker', 'inspect', 'ai-trading-freqtrade', 'ai-trading-supervisor'], capture_output=True, text=True).stdout)
         for container in containers:
+            if halted and container['Name'] == '/ai-trading-freqtrade':
+                if container['State'].get('Running') is not False:
+                    raise RuntimeError('risk_halt_not_preserved')
+                continue
             if container['State'].get('Health', {}).get('Status') != 'healthy':
                 raise RuntimeError('container_not_healthy')
             if container['Name'] == '/ai-trading-freqtrade':
                 env = dict(item.split('=', 1) for item in container['Config']['Env'])
                 if env.get('FREQTRADE__DRY_RUN') != 'true' or env.get('FREQTRADE__EXCHANGE__KEY') or env.get('FREQTRADE__EXCHANGE__SECRET'):
                     raise RuntimeError('simulation_environment_violation')
-        install_research_units(root)
-        print(json.dumps({'deployment': 'ok', 'commit': params['commit'], 'rollback': str(backup), 'mode': 'DRY-RUN'}))
+        print(json.dumps({'deployment': 'ok', 'commit': params['commit'], 'rollback': str(backup), 'mode': 'DRY-RUN', 'risk_halt_preserved': halted}))
         archive.unlink()
     except Exception:
         subprocess.run(['systemctl', 'stop', 'trading-research.timer', 'trading-research.service'], capture_output=True)
@@ -128,7 +157,7 @@ def install(params):
             subprocess.run(['systemctl', 'enable', '--now', 'trading-research.timer'], capture_output=True)
         else:
             subprocess.run(['systemctl', 'disable', 'trading-research.timer'], capture_output=True)
-        activate_simulation(compose, ['-d'])
+        activate_preserving_risk(compose, ['-d'], root)
         print(json.dumps({'deployment': 'rolled_back', 'backup': str(backup)}))
         raise
 
