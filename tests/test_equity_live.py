@@ -1,8 +1,11 @@
-import json,unittest
+import hashlib,json,unittest,tempfile
 from copy import deepcopy
 from datetime import datetime,timezone,timedelta
-from research_lab.equity_live import parse
+from pathlib import Path
+from unittest.mock import patch
+from research_lab.equity_live import parse, collect
 from research_lab.equity_paper import advance, new_state, summary
+from scripts.collect_equity_paper import run
 class LiveEquityTests(unittest.TestCase):
  def payload(self):
   start=datetime(2025,1,1,14,30,tzinfo=timezone.utc)
@@ -66,4 +69,139 @@ class LiveEquityTests(unittest.TestCase):
      self.assertEqual(state[field],before[field])
     self.assertEqual(summary(state)['state'],'paper_blocked')
     self.assertEqual(summary(state)['blocked_reason'],'corporate_action_requires_review')
+class RecentQuoteRepairTests(unittest.TestCase):
+ def setUp(self):
+  self.primary={}
+  for symbol in ('SOFI','U','PLUG'):
+   payload=LiveEquityTests.payload(self)
+   payload['chart']['result'][0]['meta']['symbol']=symbol
+   self.primary[symbol]=payload
+  self.recent=deepcopy(self.primary['U'])
+  result=self.recent['chart']['result'][0]
+  last=result['timestamp'][-1]
+  result['timestamp']=[last+300*i for i in range(78)]
+  result['indicators']['quote'][0]={'open':[10]*78,'high':[11]*78,'low':[9]*78,'close':[10]*78,'volume':[100]*78}
+  self.now=datetime.fromtimestamp(last,timezone.utc)+timedelta(days=1)
+  self.calls=[]
+
+ def invalid(self,symbol='U',index=-1):
+  self.primary[symbol]['chart']['result'][0]['indicators']['quote'][0]['low'][index]=10.5
+
+ def opener(self,request,timeout):
+  self.assertEqual(timeout,12)
+  url=request.full_url; self.calls.append(url)
+  symbol=url.split('/chart/')[1].split('?')[0]
+  payload=self.recent if 'range=5d&' in url else self.primary[symbol]
+  if 'range=5d&' in url and symbol != 'U':
+   payload=deepcopy(payload); payload['chart']['result'][0]['meta']['symbol']=symbol
+  raw=json.dumps(payload).encode()
+  class Response:
+   status=200
+   def __enter__(self): return self
+   def __exit__(self,*args): pass
+   def geturl(self): return url
+   def read(self,maximum): return raw[:maximum]
+  return Response()
+
+ def collect(self,symbols=('SOFI','U')):
+  with patch('research_lab.equity_live.SYMBOLS',symbols):
+   return collect(self.now,self.opener)
+
+ def test_valid_history_needs_no_secondary_request(self):
+  bundle=self.collect()
+  self.assertEqual(len(self.calls),2)
+  self.assertTrue(all('repair' not in s for s in bundle['provenance']['sources']))
+
+ def test_recent_bad_quote_is_replaced_exactly_and_provenance_is_retained(self):
+  self.invalid()
+  original=parse(json.dumps(self.primary['U']).encode(),'U',self.now)
+  bundle=self.collect(); repaired=bundle['assets'][1]
+  expected=parse(json.dumps(self.primary['SOFI']).encode(),'SOFI',self.now)['bars'][-1]
+  self.assertEqual(repaired['bars'][-1],expected)
+  self.assertEqual(repaired['bars'][:-1],original['bars'][:-1])
+  source=bundle['provenance']['sources'][1]
+  self.assertEqual(source['sha256'],hashlib.sha256(json.dumps(self.primary['U']).encode()).hexdigest())
+  self.assertEqual(source['repair']['sha256'],hashlib.sha256(json.dumps(self.recent).encode()).hexdigest())
+  self.assertEqual(source['repair']['sessions'],[repaired['bars'][-1]['close_at']])
+  self.assertEqual(source['repair']['method'],'verified_intraday_extrema')
+  self.assertEqual(source['repair']['fields'],{repaired['bars'][-1]['close_at']:['low']})
+  self.assertEqual(repaired['bars'][-1]['volume'],10000)
+  self.assertLess(repaired['bars'][-1]['low'],repaired['bars'][-1]['open'])
+  self.assertEqual(len(self.calls),3)
+  self.assertIn('events=div%2Csplits',source['url'])
+  self.assertNotIn('events=',source['repair']['url'])
+
+ def test_bad_secondary_is_refused_and_previous_bundle_remains_unchanged(self):
+  self.invalid()
+  self.recent['chart']['result'][0]['indicators']['quote'][0]['low'][-1]=10.5
+  with tempfile.TemporaryDirectory() as folder:
+   root=Path(folder); (root/'research_state').mkdir()
+   previous=root/'research_state/equities.bundle.json'; previous.write_text('{"evidence":true}')
+   status=run(root,self.now,lambda _:self.collect())
+   self.assertEqual(status['state'],'unavailable')
+   self.assertEqual(status['error_code'],'equity_recent_repair_invalid_intraday')
+   self.assertEqual(previous.read_text(),'{"evidence":true}')
+
+ def test_old_bad_history_is_not_rewritten(self):
+  self.invalid(index=20)
+  with self.assertRaisesRegex(ValueError,'equity_recent_repair_outside_window'): self.collect()
+  self.assertFalse(any('range=5d&' in url for url in self.calls))
+
+ def test_missing_or_unclosed_secondary_session_does_not_skip_bad_day(self):
+  self.invalid()
+  for future in (False,True):
+   with self.subTest(future=future):
+    payload=deepcopy(self.recent); result=payload['chart']['result'][0]
+    if future: result['timestamp']=[t+2*86400 for t in result['timestamp']]
+    else:
+     result['timestamp']=result['timestamp'][:-1]
+     result['indicators']['quote'][0]={k:v[:-1] for k,v in result['indicators']['quote'][0].items()}
+    old=self.recent; self.recent=payload
+    try:
+     with self.assertRaisesRegex(ValueError,'equity_recent_repair_missing_session'): self.collect()
+    finally: self.recent=old
+
+ def test_wrong_secondary_identity_is_refused(self):
+  self.invalid(); self.recent['chart']['result'][0]['meta']['currency']='EUR'
+  with self.assertRaisesRegex(ValueError,'equity_live_identity'): self.collect()
+
+ def test_event_mismatch_prevents_repair(self):
+  self.invalid(); result=self.recent['chart']['result'][0]; epoch=result['timestamp'][0]
+  result['events']={'dividends':{str(epoch):{'date':epoch,'amount':.25}}}
+  with self.assertRaisesRegex(ValueError,'equity_recent_repair_events_mismatch'): self.collect()
+
+ def test_zero_volume_is_not_repaired(self):
+  self.primary['U']['chart']['result'][0]['indicators']['quote'][0]['volume'][-1]=0
+  with self.assertRaisesRegex(ValueError,'zero_volume_session_requires_review'): self.collect()
+  self.assertFalse(any('range=5d&' in url for url in self.calls))
+
+ def test_recovery_requests_have_a_per_collection_budget(self):
+  for symbol in ('SOFI','U','PLUG'): self.invalid(symbol)
+  with self.assertRaisesRegex(ValueError,'equity_recent_repair_budget_exceeded'):
+   self.collect(('SOFI','U','PLUG'))
+  self.assertEqual(len(self.calls),5)
+  self.assertEqual(sum('range=5d&' in url for url in self.calls),2)
+
+ def test_changed_open_close_or_unchanged_extreme_is_not_repaired(self):
+  self.invalid()
+  for key,index,value in [('open',0,10.1),('close',-1,10.1),('high',20,11.1),('volume',20,10000)]:
+   with self.subTest(key=key):
+    payload=deepcopy(self.recent); payload['chart']['result'][0]['indicators']['quote'][0][key][index]=value
+    old=self.recent; self.recent=payload
+    try:
+     with self.assertRaisesRegex(ValueError,'equity_recent_repair_quotes_mismatch'):self.collect()
+    finally:self.recent=old
+
+ def test_duplicate_or_zero_volume_intraday_bar_is_refused(self):
+  self.invalid()
+  for duplicate in (False,True):
+   with self.subTest(duplicate=duplicate):
+    payload=deepcopy(self.recent); result=payload['chart']['result'][0]
+    if duplicate:result['timestamp'][20]=result['timestamp'][19]
+    else:result['indicators']['quote'][0]['volume'][20]=0
+    old=self.recent; self.recent=payload
+    try:
+     with self.assertRaises(ValueError):self.collect()
+    finally:self.recent=old
+
 if __name__=='__main__': unittest.main()

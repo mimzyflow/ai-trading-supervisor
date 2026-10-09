@@ -41,6 +41,34 @@ conserve l'ancien bundle comme preuve, refuse les nouvelles décisions actions
 et laisse fonctionner le contrôle crypto. Les opérations sur titres nouvelles
 requièrent une revue avant de produire des transactions ou du P/L.
 
+### Bougie récente incohérente chez Yahoo
+
+Le 9 octobre après clôture, le flux `range=2y` de Unity (U) fournit une
+ouverture de 46,1599998474 USD sous son plus bas de 46,2599983215 USD.
+Le flux quotidien court présente aussi cette anomalie par intermittence.
+Le collecteur peut récupérer les extrêmes incohérents parmi les cinq dernières
+séances, datées de sept jours au plus, à partir du flux `range=5d&interval=5m`.
+Les 78 barres consécutives de la séance régulière doivent toutes être présentes,
+avec OHLC et volume valides. Ouverture, clôture et extrême quotidien déjà
+cohérent doivent correspondre au flux intraday. Les volumes intraday ne peuvent
+pas dépasser le volume quotidien publié ; ce dernier est conservé tel quel.
+Seul le high/low incohérent est remplacé par le maximum/minimum réellement
+observé dans ces barres. Aucun prix n'est inventé, aucun intervalle manquant
+n'est interpolé et aucune séance n'est supprimée.
+
+Deux requêtes supplémentaires au plus par collecte, sans retry, avec les
+mêmes limites HTTP et refus des redirections. Les empreintes du flux initial
+et du flux de récupération, leur URL, la date et les séances remplacées sont
+conservées dans la provenance du bundle ; `equity_collection.json` énumère
+les récupérations. L'historique des opérations sur titres demeure celui du
+flux primaire `events=div,splits` ; il n'est ni supprimé ni remplacé.
+Identité, devise, OHLCV, clôture et opérations sur titres
+doivent rester cohérents. Une récupération absente/invalide, une anomalie
+ancienne ou un budget épuisé conserve l'ancien bundle et bloque les décisions
+actions. Les motifs d'erreur connus sont exposés sous forme de codes fermés,
+sans publier le message brut de la source. Yahoo reste l'unique fournisseur :
+cette récupération ne constitue pas un recoupement indépendant.
+
 ## Méthodes et efficacité
 
 La crypto cumulée inclut l'ancienne baseline ; les clôtures V2 sont affichées
@@ -65,10 +93,11 @@ recalcul. Aucun ordre réel n'est activé.
 
 ## Supervision configurée
 
-Une revue Codex quotidienne à 9 h, en lecture seule, est attachée à la
+Une revue Codex horaire, en lecture seule, est attachée à la
 conversation (`surveillance-bots-crypto-et-actions`). Elle utilise le
 connecteur `trading_status`, compare la fraîcheur et les changements, et
-présente les points nécessitant une décision humaine. Son premier passage
-planifié reste à vérifier ; il dépend de la disponibilité du poste Codex.
+présente les points nécessitant une décision humaine. Les contrôles du
+9 octobre à 19:49 et 20:49 UTC ont été exécutés ; la revue dépend toujours
+de la disponibilité du poste Codex.
 La collecte, les rapports et le contrôle de risque sur Oracle poursuivent
 leur cadence propre toutes les cinq minutes, même sans ouverture du Mac.

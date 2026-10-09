@@ -10,6 +10,20 @@ from research_lab.worker import current_equity_bundle
 
 
 class CollectionIsolationTests(unittest.TestCase):
+    def test_known_failure_code_is_visible_and_unknown_messages_stay_private(self):
+        for message, code in [('invalid_ohlc_geometry', 'invalid_ohlc_geometry'),
+                              ('private upstream token or response', None)]:
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                now = datetime.now(timezone.utc)
+                def failure(_):
+                    raise ValueError(message)
+                status = run(root, now, failure)
+                self.assertEqual(status.get('error_code'), code)
+                self.assertNotIn('private upstream', json.dumps(status))
+                with self.assertRaisesRegex(ValueError, code or 'equity_collection_unavailable'):
+                    current_equity_bundle(root / 'research_state', now)
+
     def test_source_failure_preserves_previous_bundle_and_disables_equity_consumption(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
