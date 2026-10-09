@@ -5,11 +5,11 @@ IMAGE='freqtradeorg/freqtrade:2026.9@sha256:9d67afb8eb5f4e1210f4fb067efcbd5e005b
 CODE='''
 import sys,json
 from pathlib import Path
-sys.path[:0]=['/candidate/user_data/strategies','/candidate/supervisor']
+sys.path.insert(0,'/freqtrade/user_data/strategies')
 from freqtrade.enums import RunMode
 from freqtrade.resolvers import StrategyResolver
 config=json.loads(Path('/candidate/user_data/config.dryrun.json').read_text())
-config.update(user_data_dir=Path('/candidate/user_data'),strategy_path='/candidate/user_data/strategies',runmode=RunMode.DRY_RUN)
+config.update(user_data_dir=Path('/freqtrade/user_data'),strategy_path='/freqtrade/user_data/strategies',runmode=RunMode.DRY_RUN)
 strategy=StrategyResolver.load_strategy(config)
 strategy.bot_start()
 assert strategy.stoploss == -1.0
@@ -26,7 +26,12 @@ def check(root):
     if not (root/'simulation-policy.json').exists():
         return
     result=subprocess.run(['docker','run','--rm','--network','none','--memory','512m','--cpus','1',
-                           '--entrypoint','python','-e','SIMULATION_POLICY_FILE=/candidate/simulation-policy.json',
-                           '-v',str(root)+':/candidate:ro',IMAGE,'-c',CODE],
+                           '--entrypoint','python','-e','SIMULATION_POLICY_FILE=/freqtrade/user_data/simulation-policy.json',
+                           '-e','PYTHONPATH=/freqtrade/room-lib',
+                           '-v',str(root)+':/candidate:ro',
+                           '-v',str(root/'user_data/strategies')+':/freqtrade/user_data/strategies:ro',
+                           '-v',str(root/'supervisor/paper_policy.py')+':/freqtrade/room-lib/paper_policy.py:ro',
+                           '-v',str(root/'simulation-policy.json')+':/freqtrade/user_data/simulation-policy.json:ro',
+                           IMAGE,'-c',CODE],
                           check=True,capture_output=True,text=True,timeout=60)
     print(result.stdout.strip())

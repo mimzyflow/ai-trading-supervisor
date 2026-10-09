@@ -13,6 +13,7 @@ services:
       FREQTRADE__API_SERVER__ENABLE_OPENAPI: "false"
       FREQTRADE__DRY_RUN: "true"
       SIMULATION_POLICY_FILE: /freqtrade/user_data/simulation-policy.json
+      PYTHONPATH: /freqtrade/room-lib
       FREQTRADE__API_SERVER__USERNAME: "${FREQTRADE_UI_USERNAME:?set in private .env}"
       FREQTRADE__API_SERVER__PASSWORD: "${FREQTRADE_UI_PASSWORD:?set in private .env}"
       FREQTRADE__API_SERVER__JWT_SECRET_KEY: "${FREQTRADE_UI_JWT:?set in private .env}"
@@ -20,7 +21,7 @@ services:
     volumes:
       - ./user_data/config.dryrun.json:/freqtrade/user_data/config.dryrun.json:ro
       - ./user_data/strategies:/freqtrade/user_data/strategies:ro
-      - ./supervisor/paper_policy.py:/freqtrade/user_data/strategies/paper_policy.py:ro
+      - ./supervisor/paper_policy.py:/freqtrade/room-lib/paper_policy.py:ro
       - ./simulation-policy.json:/freqtrade/user_data/simulation-policy.json:ro
       - ./user_data/reports:/freqtrade/room-reports:ro
       - ./supervisor/engine_healthcheck.py:/freqtrade/user_data/engine_healthcheck.py:ro
