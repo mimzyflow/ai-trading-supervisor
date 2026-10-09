@@ -54,7 +54,7 @@ def activate_preserving_risk(compose, arguments, root):
     preflight_simulation_compose(compose)
     if risk_halted(root):
         # Explicit service + no-deps prevents Compose from reviving Freqtrade.
-        run(compose + ['up'] + arguments + ['--no-deps', 'supervisor'])
+        run(compose + ['up'] + arguments + ['--force-recreate', '--no-deps', 'supervisor'])
         return True
     run(compose + ['up'] + arguments)
     return False

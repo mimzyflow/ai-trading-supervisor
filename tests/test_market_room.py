@@ -93,7 +93,7 @@ class MarketRoomTests(unittest.TestCase):
             db.execute("insert into bots values('root','paused_risk')")
         with patch('scripts.install_release.preflight_simulation_compose'), patch('scripts.install_release.run') as runner:
             self.assertTrue(activate_preserving_risk(['docker','compose'], ['-d'], self.root))
-            self.assertEqual(runner.call_args.args[0], ['docker','compose','up','-d','--no-deps','supervisor'])
+            self.assertEqual(runner.call_args.args[0], ['docker','compose','up','-d','--force-recreate','--no-deps','supervisor'])
         (self.root / 'research_state/registry.sqlite').write_text('invalid registry')
         with patch('scripts.install_release.preflight_simulation_compose'), patch('scripts.install_release.run') as runner:
             with self.assertRaises(sqlite3.Error):
