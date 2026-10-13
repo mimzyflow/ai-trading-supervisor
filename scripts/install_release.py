@@ -1,12 +1,15 @@
 """Run on Oracle only through the authorized deployment command."""
 import hashlib
 import json
+import logging
 import shutil
 import sqlite3
 import subprocess
 import tarfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+
+log = logging.getLogger('install_release')
 
 
 def run(argv, **kwargs):
@@ -102,6 +105,7 @@ def activate_simulation(compose, arguments):
 def risk_halted(root):
     path = root / 'research_state/registry.sqlite'
     if not path.exists():
+        log.warning('risk_registry_absent: %s introuvable ; aucun arrêt de risque détectable, risk_halted=False', path)
         return False
     # An unreadable existing registry must stop deployment, never imply consent
     # to resume a halted simulation. Registry and portfolios remain untouched.
