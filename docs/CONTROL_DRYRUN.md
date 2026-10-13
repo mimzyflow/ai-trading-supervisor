@@ -30,12 +30,53 @@ Le témoin est dans `docker-compose.control.yml`, projet Compose séparé.
   (`supervisor/control_guards.py::require_simulation`).
 - L'arrêt portefeuille est recalculé depuis la base : il survit au redémarrage.
 
-## Déploiement Oracle (manuel, après relecture de Manager)
+## Déploiement Oracle manuel (après relecture de Manager)
 ```
 docker compose -p ai-trading-control -f docker-compose.control.yml config  # vérifier DRY_RUN / clés vides
 docker compose -p ai-trading-control -f docker-compose.control.yml up -d
 ```
 Non encore validé dans l'image Freqtrade : lancer d'abord
 `freqtrade list-strategies` / un backtest court avec `MoussaControlStops`.
-Le superviseur ne lit pas encore cette base : voir la PR « trading_status enrichi »
-(variable `EXTRA_ACCOUNTS`).
+Le superviseur lit cette base via la PR #8 (« trading_status enrichi »,
+variable `EXTRA_ACCOUNTS`, volume monté en lecture seule).
+
+## Arrêt portefeuille -5 % : réalisé + latent de toutes les positions
+`MoussaControlStops._halted` additionne la perte réalisée (trades clôturés)
+et le P&L latent de **toutes** les positions ouvertes
+(`control_guards.unrealized_pnl`), chacune valorisée à la dernière clôture
+analysée de sa paire (ou au prix courant pour la paire évaluée ; à défaut de
+prix, au prix d'entrée, ce qui compte les frais). Le même calcul est utilisé
+dans `confirm_trade_entry` (aucune nouvelle entrée si l'arrêt est atteint) et
+dans `custom_exit` (liquidation simulée des positions).
+
+## Pause 3 pertes (témoin) ≠ critère 10 pertes (validation, PR #9)
+| | Pause 3 pertes (ce compte) | Critère 10 pertes (VALIDATION_CRITERIA, #9) |
+|---|---|---|
+| Nature | protection **dans** la stratégie témoin | critère d'**évaluation** de l'expérience |
+| Effet | bloque les nouvelles entrées 24 h, puis reprise automatique | arrête/invalide l'expérience ; décision humaine requise |
+| Portée | `MoussaControlStops` uniquement | expérience suivie (`MoussaMarketRoom`) |
+| Paramètre | `CONTROL_MAX_CONSECUTIVE_LOSSES` (défaut 3), `CONTROL_LOSS_PAUSE_HOURS` (24) | `config/validation-thresholds.json` → `stop.max_consecutive_losses` = 10 |
+
+Les deux ne se substituent pas : la pause est temporaire et ne remet pas à
+zéro le compteur du critère de validation.
+
+## Coût net d'un stop -3 % avec frais 0,8 % par côté
+Frais Kraken simulés : 0,8 % à l'entrée + 0,8 % à la sortie ≈ **1,6 %
+aller-retour**. Un stop déclenché à -3 % de prix coûte donc environ
+**-4,6 % de la mise nette** (≈ -0,46 EUR sur une mise de 10 EUR), hors
+glissement. Il faut ~+1,6 % de hausse pour simplement couvrir les frais ;
+le seuil de -5 % du portefeuille (5 EUR) correspond à environ 11 stops nets
+sur 10 EUR, ou moins si plusieurs positions sont en perte latente.
+
+## CI
+`.github/workflows/ci.yml` exécute `scripts/check_simulation.py` (configs
+statiques, sans base Oracle ni Docker) puis `pytest`. La stratégie témoin est
+testée avec des modules Freqtrade simulés (`tests/test_control_strategy.py`).
+
+## Déploiement
+`scripts/install_release.py` vérifie aussi `docker-compose.control.yml`
+(préflight : dry-run, clés vides, `--dry-run` en commande) **avant** toute
+modification, puis démarre le témoin (`-p ai-trading-control`, service
+`freqtrade-control` seulement) après que la release principale est saine.
+Un échec du témoin est signalé (`"control"` dans la sortie JSON) sans
+rollback ni effet sur `freqtrade`/`supervisor`.
