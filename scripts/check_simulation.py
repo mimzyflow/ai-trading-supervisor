@@ -24,9 +24,45 @@ def validate(config):
     return True
 
 
+CONTROL_CONFIG = "user_data/config.control.dryrun.json"
+CONTROL_COMPOSE = "docker-compose.control.yml"
+
+
+def validate_control(config, reference=None):
+    """Control account (MoussaControlStops): same rules + identical market setup."""
+    validate(config)
+    if config.get("strategy") != "MoussaControlStops":
+        raise ValueError("control_strategy_mismatch")
+    if reference is not None:
+        for key in ["fee", "dry_run_wallet", "stake_currency", "timeframe", "trading_mode"]:
+            if config.get(key) != reference.get(key):
+                raise ValueError("control_differs_from_experiment_" + key)
+        if config.get("exchange", {}).get("pair_whitelist") != reference.get("exchange", {}).get("pair_whitelist"):
+            raise ValueError("control_differs_from_experiment_pair_whitelist")
+    return True
+
+
+def validate_control_compose(text):
+    """Static check of the control Compose file (no Docker, no Oracle DB needed)."""
+    required = ['FREQTRADE__DRY_RUN: "true"', "--dry-run", 'FREQTRADE__EXCHANGE__KEY: ""',
+                'FREQTRADE__EXCHANGE__SECRET: ""', "127.0.0.1:8081:8080"]
+    for needle in required:
+        if needle not in text:
+            raise ValueError("control_compose_missing:" + needle)
+    if "trades-market-room-100eur-20261009" in text:
+        raise ValueError("control_compose_shares_experiment_db")
+    return True
+
+
 def main():
     root = Path(__file__).resolve().parents[1]
-    validate(json.loads((root / "user_data/config.dryrun.json").read_text()))
+    reference = json.loads((root / "user_data/config.dryrun.json").read_text())
+    validate(reference)
+    if (root / CONTROL_CONFIG).exists():
+        validate_control(json.loads((root / CONTROL_CONFIG).read_text()), reference)
+        if (root / CONTROL_COMPOSE).exists():
+            validate_control_compose((root / CONTROL_COMPOSE).read_text())
+        print("Compte témoin MoussaControlStops validé : dry-run, mêmes frais/univers/capital, aucune clé.")
     print("Simulation Kraken spot EUR validée : portefeuille <=100 EUR, positions non plafonnées par nombre, stake <=20 EUR, aucune clé exchange.")
 
 

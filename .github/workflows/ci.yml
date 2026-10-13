@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Simulation only: no exchange keys, no Oracle DB, no Docker daemon required.
+      FREQTRADE__DRY_RUN: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pandas numpy
+          if [ -f requirements-equity-research.txt ]; then python -m pip install -r requirements-equity-research.txt; fi
+      - name: check_simulation (static configs, no Oracle DB)
+        run: python scripts/check_simulation.py
+      - name: pytest
+        run: python -m pytest -q tests

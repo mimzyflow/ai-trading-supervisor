@@ -13,12 +13,17 @@ def run(argv, **kwargs):
     return subprocess.run(argv, check=True, **kwargs)
 
 
-def preflight_simulation_compose(compose):
+CONTROL_PROJECT = 'ai-trading-control'
+CONTROL_SERVICE = 'freqtrade-control'
+CONTROL_CONTAINER = 'ai-trading-freqtrade-control'
+
+
+def preflight_simulation_compose(compose, service='freqtrade'):
     """Inspect private resolved configuration without emitting credentials."""
     try:
         resolved = run(compose + ['config', '--format', 'json'], capture_output=True, text=True)
         config = json.loads(resolved.stdout)
-        environment = config['services']['freqtrade']['environment']
+        environment = config['services'][service]['environment']
     except Exception:
         raise ValueError('resolved_compose_unavailable') from None
     if not isinstance(environment, dict):
@@ -30,6 +35,48 @@ def preflight_simulation_compose(compose):
         value = environment.get(name)
         if value is not None and value != '':
             raise ValueError('resolved_compose_exchange_credentials_present')
+
+
+def control_compose(root, compose_file=None):
+    """Separate Compose project for the DRY-RUN control account (PR #7)."""
+    return ['docker', 'compose', '-p', CONTROL_PROJECT, '--project-directory', str(root),
+            '-f', str(compose_file or (root / 'docker-compose.control.yml'))]
+
+
+def preflight_control_compose(compose):
+    """Same fail-closed checks as the main bot, plus an explicit --dry-run flag."""
+    preflight_simulation_compose(compose, CONTROL_SERVICE)
+    try:
+        resolved = run(compose + ['config', '--format', 'json'], capture_output=True, text=True)
+        command = json.loads(resolved.stdout)['services'][CONTROL_SERVICE].get('command')
+    except Exception:
+        raise ValueError('resolved_control_compose_unavailable') from None
+    words = command if isinstance(command, list) else str(command or '').split()
+    if '--dry-run' not in words:
+        raise ValueError('resolved_control_compose_requires_dry_run_flag')
+
+
+def activate_control(root):
+    """Start the control account after the main release is healthy.
+
+    Best effort: a failure is reported but never rolls back or touches the
+    main freqtrade/supervisor services. Preflight refuses any non-simulation
+    configuration before ``up``.
+    """
+    if not (root / 'docker-compose.control.yml').exists():
+        return 'absent'
+    compose = control_compose(root)
+    try:
+        preflight_control_compose(compose)
+        run(compose + ['up', '-d', '--wait', '--wait-timeout', '120', CONTROL_SERVICE], capture_output=True)
+        container = json.loads(run(['docker', 'inspect', CONTROL_CONTAINER], capture_output=True, text=True).stdout)[0]
+        env = dict(item.split('=', 1) for item in container['Config']['Env'])
+        if env.get('FREQTRADE__DRY_RUN') != 'true' or env.get('FREQTRADE__EXCHANGE__KEY') or env.get('FREQTRADE__EXCHANGE__SECRET'):
+            run(compose + ['stop', CONTROL_SERVICE], capture_output=True)
+            return 'stopped_simulation_violation'
+        return 'started'
+    except Exception as error:
+        return 'failed:' + (str(error) if isinstance(error, ValueError) else type(error).__name__)
 
 
 def activate_simulation(compose, arguments):
@@ -105,6 +152,8 @@ def install(params):
     # changing active files. A refusal here must never enter activation/rollback.
     candidate_compose = ['docker', 'compose', '--project-directory', str(root), '-f', str(stage / 'docker-compose.yml')]
     preflight_simulation_compose(candidate_compose)
+    if (stage / 'docker-compose.control.yml').exists():
+        preflight_control_compose(control_compose(root, stage / 'docker-compose.control.yml'))
     if (stage / 'simulation-policy.json').exists():
         # Import the staged validator before changing code or risk state.
         import importlib.util
@@ -153,7 +202,8 @@ def install(params):
                 env = dict(item.split('=', 1) for item in container['Config']['Env'])
                 if env.get('FREQTRADE__DRY_RUN') != 'true' or env.get('FREQTRADE__EXCHANGE__KEY') or env.get('FREQTRADE__EXCHANGE__SECRET'):
                     raise RuntimeError('simulation_environment_violation')
-        print(json.dumps({'deployment': 'ok', 'commit': params['commit'], 'rollback': str(backup), 'mode': 'DRY-RUN', 'risk_halt_preserved': halted}))
+        control = activate_control(root)
+        print(json.dumps({'deployment': 'ok', 'commit': params['commit'], 'rollback': str(backup), 'mode': 'DRY-RUN', 'risk_halt_preserved': halted, 'control': control}))
         archive.unlink()
     except Exception:
         subprocess.run(['systemctl', 'stop', 'trading-research.timer', 'trading-research.service'], capture_output=True)
