@@ -16,6 +16,8 @@ def run(argv, **kwargs):
 CONTROL_PROJECT = 'ai-trading-control'
 CONTROL_SERVICE = 'freqtrade-control'
 CONTROL_CONTAINER = 'ai-trading-freqtrade-control'
+CONTROL_LOG_DIR = '/freqtrade/runtime/control'
+FREQTRADE_UID = '1000:1000'  # ftuser dans l'image freqtradeorg/freqtrade
 
 
 def preflight_simulation_compose(compose, service='freqtrade'):
@@ -56,6 +58,18 @@ def preflight_control_compose(compose):
         raise ValueError('resolved_control_compose_requires_dry_run_flag')
 
 
+def prepare_control_runtime(compose):
+    """Create the control log directory and give the control volume to ftuser.
+
+    The volume ``ai-trading-freqtrade-control-runtime`` may first be created
+    empty (root-owned) by the main project's supervisor mount. One-shot root
+    container, control volume only: never touches ``ai-trading-freqtrade-runtime``.
+    """
+    run(compose + ['run', '--rm', '--no-deps', '-T', '--user', '0:0', '--entrypoint', 'sh', CONTROL_SERVICE, '-c',
+                   'mkdir -p ' + CONTROL_LOG_DIR + ' && chown ' + FREQTRADE_UID + ' /freqtrade/runtime && chown -R ' + FREQTRADE_UID + ' ' + CONTROL_LOG_DIR],
+        capture_output=True)
+
+
 def activate_control(root):
     """Start the control account after the main release is healthy.
 
@@ -68,6 +82,7 @@ def activate_control(root):
     compose = control_compose(root)
     try:
         preflight_control_compose(compose)
+        prepare_control_runtime(compose)
         run(compose + ['up', '-d', '--wait', '--wait-timeout', '120', CONTROL_SERVICE], capture_output=True)
         container = json.loads(run(['docker', 'inspect', CONTROL_CONTAINER], capture_output=True, text=True).stdout)[0]
         env = dict(item.split('=', 1) for item in container['Config']['Env'])

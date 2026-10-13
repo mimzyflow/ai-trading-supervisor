@@ -46,6 +46,34 @@ class CheckSimulationControlTests(unittest.TestCase):
                 check_simulation.validate_control_compose(bad)
 
 
+class ControlLogfileTests(unittest.TestCase):
+    """Le témoin doit écrire son propre journal, jamais celui du bot principal."""
+
+    @staticmethod
+    def logfile(compose_text):
+        words = compose_text.split()
+        return words[words.index('--logfile') + 1]
+
+    def test_control_logfile_distinct_from_main(self):
+        main = self.logfile((ROOT / 'docker-compose.yml').read_text())
+        control = self.logfile((ROOT / 'docker-compose.control.yml').read_text())
+        self.assertEqual(main, '/freqtrade/runtime/freqtrade.log')
+        self.assertEqual(control, check_simulation.CONTROL_LOGFILE)
+        self.assertNotEqual(control, main)
+        self.assertTrue(control.startswith(install_release.CONTROL_LOG_DIR + '/'))
+
+    def test_control_compose_sharing_main_logfile_rejected(self):
+        text = (ROOT / 'docker-compose.control.yml').read_text()
+        shared = text.replace(check_simulation.CONTROL_LOGFILE, check_simulation.MAIN_LOGFILE)
+        with self.assertRaisesRegex(ValueError, 'logfile'):
+            check_simulation.validate_control_compose(shared)
+
+    def test_main_compose_logfile_unchanged(self):
+        text = (ROOT / 'docker-compose.yml').read_text()
+        self.assertIn('--logfile /freqtrade/runtime/freqtrade.log', text)
+        self.assertNotIn('freqtrade-control.log', text)
+
+
 class InstallReleaseControlTests(unittest.TestCase):
     compose = ['docker', 'compose', '-p', 'ai-trading-control', '-f', 'control.yml']
 
@@ -88,6 +116,13 @@ class InstallReleaseControlTests(unittest.TestCase):
                 self.assertEqual(install_release.activate_control(root), 'started')
             ups = [c for c in calls if 'up' in c]
             self.assertEqual(len(ups), 1)
+            prepares = [c for c in calls if 'run' in c]
+            self.assertEqual(len(prepares), 1)
+            self.assertLess(calls.index(prepares[0]), calls.index(ups[0]))
+            self.assertIn('ai-trading-control', prepares[0])
+            self.assertIn('freqtrade-control', prepares[0])
+            self.assertIn('mkdir -p /freqtrade/runtime/control', prepares[0][-1])
+            self.assertNotIn('ai-trading-freqtrade-runtime', ' '.join(prepares[0]))
             self.assertIn('ai-trading-control', ups[0])
             self.assertEqual(ups[0][-1], 'freqtrade-control')
 
@@ -98,6 +133,7 @@ class InstallReleaseControlTests(unittest.TestCase):
             with patch.object(install_release, 'run', return_value=resolved({**SAFE, 'FREQTRADE__DRY_RUN': 'false'})) as runner:
                 self.assertEqual(install_release.activate_control(root), 'failed:resolved_compose_requires_dry_run')
             self.assertFalse(any('up' in c.args[0] for c in runner.call_args_list))
+            self.assertFalse(any('run' in c.args[0] for c in runner.call_args_list))
 
 
 if __name__ == '__main__':

@@ -26,6 +26,8 @@ def validate(config):
 
 CONTROL_CONFIG = "user_data/config.control.dryrun.json"
 CONTROL_COMPOSE = "docker-compose.control.yml"
+CONTROL_LOGFILE = "/freqtrade/runtime/control/freqtrade-control.log"
+MAIN_LOGFILE = "/freqtrade/runtime/freqtrade.log"
 
 
 def validate_control(config, reference=None):
@@ -51,6 +53,12 @@ def validate_control_compose(text):
             raise ValueError("control_compose_missing:" + needle)
     if "trades-market-room-100eur-20261009" in text:
         raise ValueError("control_compose_shares_experiment_db")
+    # Journal dédié : le bot principal écrit MAIN_LOGFILE ; partager ce chemin a
+    # provoqué une boucle de redémarrage (PermissionError) du témoin.
+    if "--logfile " + CONTROL_LOGFILE not in text:
+        raise ValueError("control_compose_missing_dedicated_logfile")
+    if MAIN_LOGFILE in text:
+        raise ValueError("control_compose_shares_experiment_logfile")
     return True
 
 

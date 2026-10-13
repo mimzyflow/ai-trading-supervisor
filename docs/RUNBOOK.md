@@ -85,6 +85,16 @@ donc comme appartenant au projet principal : `docker compose down -v` (ou
 - Le volume `ai-trading-freqtrade-runtime` (external) n'est pas supprimé par
   `down -v`, mais la règle reste : jamais `-v` sur ce projet.
 
+### Compte témoin : journal dédié
+
+Le témoin (`ai-trading-freqtrade-control`, projet `ai-trading-control`) écrit
+`/freqtrade/runtime/control/freqtrade-control.log` dans son volume
+`ai-trading-freqtrade-control-runtime`, jamais le `freqtrade.log` du bot
+principal. Le déploiement prépare ce répertoire (propriétaire ftuser) avant
+`up` ; en cas de `PermissionError` au démarrage, relancer la préparation
+décrite dans `docs/CONTROL_DRYRUN.md`. Diagnostic :
+`docker logs ai-trading-freqtrade-control`.
+
 Toute future expérimentation est régie par `docs/RESEARCH_PROTOCOL.md`.
 La reprise explicite après changement de code est décrite dans
 [`RESEARCH_RESUME.md`](RESEARCH_RESUME.md). Elle conserve les preuves et réserve
