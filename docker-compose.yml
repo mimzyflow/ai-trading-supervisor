@@ -86,6 +86,9 @@ volumes:
   freqtrade_runtime:
     name: ai-trading-freqtrade-runtime
     external: true
+  # ATTENTION : ne JAMAIS lancer `docker compose down -v` sur ce projet : il
+  # supprimerait ce volume (base dry-run du compte témoin). Utiliser `down` sans -v.
+  # Voir docs/RUNBOOK.md.
   # Volume du compte témoin (projet Compose ai-trading-control). Non déclaré
   # `external` : s'il n'existe pas encore, Compose le crée vide au lieu de faire
   # échouer `up` du projet principal ; le superviseur signale alors
