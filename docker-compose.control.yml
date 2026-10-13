@@ -1,0 +1,56 @@
+# Compte témoin DRY-RUN — SIMULATION UNIQUEMENT.
+# Fichier séparé : `docker compose up` sur docker-compose.yml ne le démarre pas
+# et ne modifie ni le service freqtrade existant ni MoussaMarketRoom.
+# Démarrage manuel explicite (après relecture) :
+#   docker compose -p ai-trading-control -f docker-compose.control.yml up -d
+# Aucune clé d'échange : key/secret vides, dry_run forcé, port local distinct.
+services:
+  freqtrade-control:
+    image: freqtradeorg/freqtrade:2026.9@sha256:9d67afb8eb5f4e1210f4fb067efcbd5e005bd4f1c27f6f3888b8b9fc7f9b5199
+    container_name: ai-trading-freqtrade-control
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8081:8080"
+    environment:
+      FREQTRADE__API_SERVER__ENABLED: "true"
+      FREQTRADE__API_SERVER__LISTEN_IP_ADDRESS: "0.0.0.0"
+      FREQTRADE__API_SERVER__LISTEN_PORT: "8080"
+      FREQTRADE__API_SERVER__VERBOSITY: "error"
+      FREQTRADE__API_SERVER__ENABLE_OPENAPI: "false"
+      FREQTRADE__DRY_RUN: "true"
+      FREQTRADE__DRY_RUN_WALLET: "100"
+      FREQTRADE__EXCHANGE__KEY: ""
+      FREQTRADE__EXCHANGE__SECRET: ""
+      CONTROL_POLICY_ID: control-stops-20261013
+      CONTROL_MAX_CONSECUTIVE_LOSSES: "${CONTROL_MAX_CONSECUTIVE_LOSSES:-3}"
+      CONTROL_LOSS_PAUSE_HOURS: "24"
+      CONTROL_PORTFOLIO_LOSS_LIMIT_PCT: "5"
+      CONTROL_POSITION_STOP: "-0.03"
+      PYTHONPATH: /freqtrade/room-lib
+      FREQTRADE__API_SERVER__USERNAME: "${FREQTRADE_UI_USERNAME:?set in private .env}"
+      FREQTRADE__API_SERVER__PASSWORD: "${FREQTRADE_UI_PASSWORD:?set in private .env}"
+      FREQTRADE__API_SERVER__JWT_SECRET_KEY: "${FREQTRADE_UI_JWT:?set in private .env}"
+      FREQTRADE__API_SERVER__WS_TOKEN: "${FREQTRADE_UI_WS_TOKEN:?set in private .env}"
+    volumes:
+      - ./user_data/config.control.dryrun.json:/freqtrade/user_data/config.dryrun.json:ro
+      - ./user_data/strategies:/freqtrade/user_data/strategies:ro
+      - ./supervisor/control_guards.py:/freqtrade/room-lib/control_guards.py:ro
+      - ./supervisor/engine_healthcheck.py:/freqtrade/user_data/engine_healthcheck.py:ro
+      - freqtrade_control_runtime:/freqtrade/runtime
+    command: >
+      trade
+      --dry-run
+      --logfile /freqtrade/runtime/freqtrade.log
+      --db-url sqlite:////freqtrade/runtime/trades-control-stops-20261013.dryrun.sqlite
+      --config /freqtrade/user_data/config.dryrun.json
+      --strategy MoussaControlStops
+    healthcheck:
+      test: ["CMD", "python", "/freqtrade/user_data/engine_healthcheck.py"]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 4
+
+volumes:
+  freqtrade_control_runtime:
+    name: ai-trading-freqtrade-control-runtime
