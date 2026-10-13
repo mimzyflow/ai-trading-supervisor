@@ -3,6 +3,10 @@
 # et ne modifie ni le service freqtrade existant ni MoussaMarketRoom.
 # Démarrage manuel explicite (après relecture) :
 #   docker compose -p ai-trading-control -f docker-compose.control.yml up -d
+# Journal dédié : /freqtrade/runtime/control/freqtrade-control.log (volume
+# ai-trading-freqtrade-control-runtime), distinct du freqtrade.log du bot principal.
+# Le répertoire est créé/attribué à ftuser (1000:1000) avant `up` par
+# scripts/install_release.py::prepare_control_runtime (voir docs/CONTROL_DRYRUN.md).
 # Aucune clé d'échange : key/secret vides, dry_run forcé, port local distinct.
 services:
   freqtrade-control:
@@ -40,7 +44,7 @@ services:
     command: >
       trade
       --dry-run
-      --logfile /freqtrade/runtime/freqtrade.log
+      --logfile /freqtrade/runtime/control/freqtrade-control.log
       --db-url sqlite:////freqtrade/runtime/trades-control-stops-20261013.dryrun.sqlite
       --config /freqtrade/user_data/config.dryrun.json
       --strategy MoussaControlStops
