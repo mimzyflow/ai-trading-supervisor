@@ -48,6 +48,8 @@ services:
         condition: service_healthy
     volumes:
       - freqtrade_runtime:/app/runtime:ro
+      # Compte témoin DRY-RUN (docker-compose.control.yml) : base lue en lecture seule.
+      - freqtrade_control_runtime:/app/control-runtime:ro
       - ./user_data/reports:/app/reports
       - /var/lib/jarvis/runtime/trading:/app/jarvis-trading
       - ./supervisor:/app/supervisor:ro
@@ -60,6 +62,8 @@ services:
       SIMULATION_POLICY_FILE: /app/simulation-policy.json
       FREQTRADE_DB_NAME: trades-market-room-100eur-20261009.dryrun.sqlite
       RUNTIME_DIR: /app/runtime
+      EXTRA_ACCOUNTS_DIR: /app/control-runtime
+      EXTRA_ACCOUNTS: '[{"account_id":"control-stops-20261013","db":"trades-control-stops-20261013.dryrun.sqlite"}]'
       REPORTS_DIR: /app/reports
       JARVIS_REPORT_FILE: /app/jarvis-trading/latest.json
       ACTIVE_STRATEGY: MoussaMarketRoom
@@ -82,3 +86,9 @@ volumes:
   freqtrade_runtime:
     name: ai-trading-freqtrade-runtime
     external: true
+  # Volume du compte témoin (projet Compose ai-trading-control). Non déclaré
+  # `external` : s'il n'existe pas encore, Compose le crée vide au lieu de faire
+  # échouer `up` du projet principal ; le superviseur signale alors
+  # database_found=false pour ce compte.
+  freqtrade_control_runtime:
+    name: ai-trading-freqtrade-control-runtime
