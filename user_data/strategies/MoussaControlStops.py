@@ -12,7 +12,7 @@ from freqtrade.persistence import Trade
 
 from MoussaBaseline import MoussaBaseline
 from control_guards import (consecutive_loss_pause, portfolio_halt,
-                            require_simulation, settings)
+                            require_simulation, settings, unrealized_pnl)
 
 _SETTINGS = settings()
 
@@ -42,21 +42,34 @@ class MoussaControlStops(MoussaBaseline):
     def _initial(self):
         return float(self.config.get('dry_run_wallet', 100) or 100)
 
-    def _halted(self, current_time, current_rate=None, open_trade=None):
+    def _mark_price(self, pair):
+        """Dernière clôture analysée de la paire (données publiques, dry-run)."""
+        try:
+            dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+            if dataframe is not None and len(dataframe):
+                return float(dataframe['close'].iloc[-1])
+        except Exception:
+            return None
+        return None
+
+    def _halted(self, current_time, current_rate=None, current_pair=None):
+        """Perte réalisée + latente de TOUTES les positions ouvertes >= limite."""
         closed = Trade.get_trades_proxy(is_open=False)
         realized = sum(float(t.close_profit_abs or 0) for t in closed)
-        unrealized = 0.0
-        for trade in Trade.get_trades_proxy(is_open=True):
-            rate = current_rate if open_trade is not None and trade.id == open_trade.id else None
-            if rate:
-                unrealized += float(trade.calc_profit(rate))
+
+        def price_for(trade):
+            if current_rate and current_pair is not None and trade.pair == current_pair:
+                return current_rate
+            return self._mark_price(trade.pair)
+
+        unrealized, _ = unrealized_pnl(Trade.get_trades_proxy(is_open=True), price_for)
         return portfolio_halt(self._initial(), realized, unrealized, self.control['portfolio_loss_limit_pct'])
 
     def confirm_trade_entry(self, pair, order_type, amount, rate, time_in_force,
                             current_time, entry_tag, side, **kwargs):
         if self.config.get('dry_run') is not True:
             raise ValueError('control_strategy_is_simulation_only')
-        if self._halted(current_time):
+        if self._halted(current_time, rate, pair):
             return False
         closed = [(t.close_date.replace(tzinfo=timezone.utc) if t.close_date and t.close_date.tzinfo is None else t.close_date,
                    t.close_profit) for t in Trade.get_trades_proxy(is_open=False)]
@@ -66,6 +79,6 @@ class MoussaControlStops(MoussaBaseline):
 
     def custom_exit(self, pair, trade, current_time, current_rate, current_profit, **kwargs):
         # Liquidation simulée des positions ouvertes une fois l'arrêt portefeuille atteint.
-        if self._halted(current_time, current_rate, trade):
+        if self._halted(current_time, current_rate, pair):
             return 'control_portfolio_halt'
         return None

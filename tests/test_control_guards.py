@@ -44,6 +44,22 @@ class ControlGuardTests(unittest.TestCase):
         self.assertTrue(g.portfolio_halt(100, -4.0, -1.0, 5))
         self.assertTrue(g.portfolio_halt(0, 0, 0, 5))
 
+    def test_unrealized_includes_all_open_positions(self):
+        class T:
+            def __init__(self, pair, open_rate, amount, fee=0.008):
+                self.pair, self.open_rate, self.amount, self.fee = pair, open_rate, amount, fee
+            def calc_profit(self, rate):
+                return self.amount * (rate * (1 - self.fee) - self.open_rate * (1 + self.fee))
+        trades = [T('XBT/EUR', 100, 0.1), T('ETH/EUR', 10, 1), T('SOL/EUR', 5, 2)]
+        prices = {'XBT/EUR': 70, 'ETH/EUR': 8, 'SOL/EUR': None}
+        total, missing = g.unrealized_pnl(trades, lambda t: prices[t.pair])
+        expected = trades[0].calc_profit(70) + trades[1].calc_profit(8) + trades[2].calc_profit(5)
+        self.assertAlmostEqual(total, expected)
+        self.assertEqual(missing, 1)
+        # Aucune position fermée en perte, mais le latent de toutes les positions déclenche l'arrêt.
+        self.assertTrue(g.portfolio_halt(100, 0.0, total, 5))
+        self.assertFalse(g.portfolio_halt(100, 0.0, trades[0].calc_profit(70), 5))
+
     def test_require_simulation(self):
         g.require_simulation({'dry_run': True, 'trading_mode': 'spot', 'exchange': {'key': '', 'secret': ''}})
         for config in [{'dry_run': False, 'trading_mode': 'spot'}, {'dry_run': 'true', 'trading_mode': 'spot'},
@@ -75,7 +91,7 @@ class ControlGuardTests(unittest.TestCase):
         self.assertIn('FREQTRADE__EXCHANGE__KEY: ""', text)
         self.assertNotIn('trades-market-room-100eur-20261009', text)
         main = (ROOT / 'docker-compose.yml').read_text()
-        self.assertNotIn('freqtrade-control', main)
+        self.assertNotIn('\n  freqtrade-control:', main)  # pas de service témoin dans le projet principal
 
 
 if __name__ == '__main__':

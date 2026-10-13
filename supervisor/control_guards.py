@@ -78,6 +78,25 @@ def portfolio_halt(initial, realized_abs, unrealized_abs, limit_pct):
     return (realized_abs + unrealized_abs) <= -initial * limit_pct / 100.0
 
 
+def unrealized_pnl(open_trades, price_for):
+    """P&L latent de TOUTES les positions ouvertes.
+
+    open_trades : objets exposant pair, open_rate et calc_profit(rate).
+    price_for(trade) : dernier prix connu, ou None. Sans prix, la position est
+    valorisée à son prix d'entrée (calc_profit inclut alors les frais), jamais
+    ignorée. Retourne (total, nombre_de_positions_sans_prix).
+    """
+    total = 0.0
+    missing = 0
+    for trade in open_trades:
+        rate = price_for(trade)
+        if not rate or rate <= 0:
+            missing += 1
+            rate = float(trade.open_rate)
+        total += float(trade.calc_profit(rate))
+    return total, missing
+
+
 def require_simulation(config):
     if config.get('dry_run') is not True or config.get('trading_mode') != 'spot':
         raise ValueError('control_strategy_is_simulation_only')
