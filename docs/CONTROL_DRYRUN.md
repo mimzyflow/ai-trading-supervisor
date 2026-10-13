@@ -9,6 +9,7 @@ actuelle sans stops (`MoussaMarketRoom`, politique `market-room-100eur-20261009`
 | Stratégie | `MoussaMarketRoom` | `MoussaControlStops` (dérivée de `MoussaBaseline`) |
 | Base | `trades-market-room-100eur-20261009.dryrun.sqlite` | `trades-control-stops-20261013.dryrun.sqlite` |
 | Volume Docker | `ai-trading-freqtrade-runtime` | `ai-trading-freqtrade-control-runtime` |
+| Journal Freqtrade | `/freqtrade/runtime/freqtrade.log` | `/freqtrade/runtime/control/freqtrade-control.log` |
 | Port API local | 8080 | 8081 |
 | policy_id | `market-room-100eur-20261009` | `control-stops-20261013` |
 | Capital / frais | 100 EUR / 0,8 % par côté | 100 EUR / 0,8 % par côté |
@@ -33,8 +34,28 @@ Le témoin est dans `docker-compose.control.yml`, projet Compose séparé.
 ## Déploiement Oracle manuel (après relecture de Manager)
 ```
 docker compose -p ai-trading-control -f docker-compose.control.yml config  # vérifier DRY_RUN / clés vides
+# Préparer le volume témoin (une fois ; idempotent) : répertoire du journal dédié, propriétaire ftuser
+docker compose -p ai-trading-control -f docker-compose.control.yml run --rm --no-deps -T --user 0:0 --entrypoint sh freqtrade-control \
+  -c 'mkdir -p /freqtrade/runtime/control && chown 1000:1000 /freqtrade/runtime && chown -R 1000:1000 /freqtrade/runtime/control'
 docker compose -p ai-trading-control -f docker-compose.control.yml up -d
 ```
+
+### Journal dédié (correctif boucle de redémarrage 2026-10-13)
+Le témoin écrivait `--logfile /freqtrade/runtime/freqtrade.log`, même chemin
+que le bot principal, et redémarrait en boucle avec
+`PermissionError: /freqtrade/runtime/freqtrade.log` : le volume
+`ai-trading-freqtrade-control-runtime` est d'abord créé vide (propriété root)
+par le montage lecture seule du superviseur (`/app/control-runtime`), et
+`ftuser` ne pouvait pas y écrire. Désormais :
+- journal dédié `/freqtrade/runtime/control/freqtrade-control.log` ;
+- `install_release.py::prepare_control_runtime` crée ce répertoire et attribue
+  le volume témoin à `ftuser` (1000:1000) via un conteneur ponctuel avant `up`
+  (volume témoin uniquement ; `ai-trading-freqtrade-runtime` jamais touché) ;
+- `check_simulation.py` refuse un Compose témoin sans ce journal ou contenant
+  le chemin du journal principal ; test `ControlLogfileTests`.
+La base reste `/freqtrade/runtime/trades-control-stops-20261013.dryrun.sqlite`
+(lue par le superviseur sous `/app/control-runtime`). Le bot principal, son
+volume et son journal sont inchangés.
 Non encore validé dans l'image Freqtrade : lancer d'abord
 `freqtrade list-strategies` / un backtest court avec `MoussaControlStops`.
 Le superviseur lit cette base via la PR #8 (« trading_status enrichi »,
