@@ -110,6 +110,148 @@ def paper_metrics(value):
     return result
 
 
+ACCOUNT_DB_PATTERN = re.compile(r'[A-Za-z0-9._-]{1,120}\.sqlite')
+ACCOUNT_ID_PATTERN = re.compile(r'[A-Za-z0-9_:-]{1,80}')
+MAX_EXTRA_ACCOUNTS = 5
+RECENT_PROFITS_LIMIT = 10
+
+
+def account_policy_id():
+    """policy_id explicite (ACCOUNT_POLICY_ID) sinon politique active lue en lecture seule."""
+    explicit = os.environ.get('ACCOUNT_POLICY_ID', '').strip()
+    if explicit:
+        return status_code(explicit, None)
+    try:
+        policy = read_policy()
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return status_code(policy.get('id'), None) if policy else None
+
+
+def starting_balance():
+    value = number(os.environ.get("SIMULATION_START_BALANCE_EUR", "100"))
+    return value if value > 0 else 100.0
+
+
+def realized_drawdown(conn, initial):
+    """Baisse maximale (%) de la courbe de capital réalisée, trades clôturés triés par date.
+
+    Pic initial = capital de départ ; None sans trade clôturé.
+    """
+    rows = conn.execute(
+        "SELECT close_profit_abs FROM trades WHERE is_open=0 AND close_date IS NOT NULL "
+        "ORDER BY datetime(close_date), id").fetchall()
+    if not rows:
+        return None
+    equity = peak = float(initial)
+    worst = 0.0
+    for (profit,) in rows:
+        equity += number(profit)
+        peak = max(peak, equity)
+        if peak > 0:
+            worst = max(worst, (peak - equity) / peak * 100.0)
+    return round(worst, 4)
+
+
+def recent_profits(conn, limit=RECENT_PROFITS_LIMIT):
+    """Derniers trades clôturés (plus récent d'abord) : profit EUR et %, paire, date, raison."""
+    rows = conn.execute(
+        "SELECT pair, close_date, close_profit, close_profit_abs, exit_reason FROM trades "
+        "WHERE is_open=0 ORDER BY datetime(close_date) DESC, id DESC LIMIT ?", (int(limit),)).fetchall()
+    return [{'pair': str(pair)[:40] if pair is not None else None,
+             'close_date': str(date)[:40] if date else None,
+             'profit_eur': round(number(abs_), 4) if abs_ is not None else None,
+             'profit_pct': round(number(ratio) * 100, 4) if ratio is not None else None,
+             'exit_reason': str(reason)[:60] if reason is not None else None}
+            for pair, date, ratio, abs_, reason in rows]
+
+
+def trade_stats(conn, initial=None):
+    """Statistiques de l'expérience courante depuis une base Freqtrade (lecture seule).
+
+    Les colonnes absentes (anciennes bases, tests) donnent None, jamais zéro inventé.
+    max_drawdown_pct : baisse maximale de la courbe de capital réalisée (clôtures).
+    recent_profits : RECENT_PROFITS_LIMIT dernières clôtures, plus récente d'abord.
+    """
+    columns = {row[1] for row in conn.execute('PRAGMA table_info(trades)')}
+    closed = conn.execute(
+        """SELECT COUNT(*),
+                  SUM(CASE WHEN close_profit>0 THEN 1 ELSE 0 END),
+                  SUM(CASE WHEN close_profit<=0 THEN 1 ELSE 0 END),
+                  COALESCE(SUM(close_profit_abs),0),
+                  COALESCE(SUM(CASE WHEN close_profit_abs>0 THEN close_profit_abs ELSE 0 END),0),
+                  COALESCE(-SUM(CASE WHEN close_profit_abs<0 THEN close_profit_abs ELSE 0 END),0),
+                  MAX(close_date)
+           FROM trades WHERE is_open=0""").fetchone()
+    result = {
+        'closed_trades': closed[0] or 0, 'wins': closed[1] or 0, 'losses': closed[2] or 0,
+        'realized_profit_eur': round(number(closed[3]), 4),
+        'profit_factor': round(number(closed[4]) / number(closed[5]), 4) if number(closed[5]) > 0 else None,
+        'last_close_date': str(closed[6])[:40] if closed[6] else None,
+        'first_open_date': None, 'fees_paid_eur': None,
+        'max_drawdown_pct': realized_drawdown(conn, starting_balance() if initial is None else initial),
+        'recent_profits': recent_profits(conn) if {'pair', 'exit_reason'} <= columns else [],
+    }
+    if 'open_date' in columns:
+        first = conn.execute('SELECT MIN(open_date) FROM trades').fetchone()[0]
+        result['first_open_date'] = str(first)[:40] if first else None
+    if {'fee_open', 'fee_close', 'open_rate', 'close_rate', 'amount'} <= columns:
+        fees = conn.execute(
+            """SELECT COALESCE(SUM(COALESCE(fee_open,0)*COALESCE(open_rate,0)*COALESCE(amount,0)
+                                + CASE WHEN is_open=0 THEN COALESCE(fee_close,0)*COALESCE(close_rate,0)*COALESCE(amount,0) ELSE 0 END),0)
+               FROM trades""").fetchone()[0]
+        result['fees_paid_eur'] = round(number(fees), 4)
+    return result
+
+
+def read_account(path, account_id):
+    """Compte supplémentaire (ex. témoin DRY-RUN) lu uniquement depuis sa base, sans API."""
+    item = {'account_id': account_id, 'database': path.name, 'database_found': path.is_file(), 'database_ok': False}
+    if not item['database_found']:
+        return item
+    try:
+        conn = sqlite3.connect('file:' + quote(str(path.resolve()), safe='/') + '?mode=ro', uri=True, timeout=2)
+        try:
+            item.update(trade_stats(conn))
+            item['database_ok'] = True
+        finally:
+            conn.close()
+    except (sqlite3.Error, OSError, TypeError, ValueError):
+        item['database_ok'] = False
+    return item
+
+
+def extra_accounts_dir():
+    """Répertoire des bases supplémentaires (volume témoin monté en lecture seule), sinon RUNTIME."""
+    value = os.environ.get('EXTRA_ACCOUNTS_DIR', '').strip()
+    return Path(value) if value else RUNTIME
+
+
+def extra_accounts():
+    """EXTRA_ACCOUNTS='[{"account_id":"control-stops-20261013","db":"trades-control-stops-20261013.dryrun.sqlite"}]'.
+
+    Noms de fichiers simples uniquement, résolus sous RUNTIME ; entrée invalide ignorée.
+    """
+    try:
+        raw = json.loads(os.environ.get('EXTRA_ACCOUNTS', '') or '[]')
+    except ValueError:
+        return []
+    accounts = []
+    if not isinstance(raw, list):
+        return accounts
+    for entry in raw[:MAX_EXTRA_ACCOUNTS]:
+        if not isinstance(entry, dict):
+            continue
+        name, account_id = entry.get('db'), entry.get('account_id')
+        if not (isinstance(name, str) and ACCOUNT_DB_PATTERN.fullmatch(name)
+                and isinstance(account_id, str) and ACCOUNT_ID_PATTERN.fullmatch(account_id)):
+            continue
+        if name == DB.name:
+            continue
+        accounts.append(read_account(extra_accounts_dir() / name, account_id))
+    return accounts
+
+
 def read_research():
     path = REPORTS / 'autonomy.json'
     try:
@@ -191,6 +333,14 @@ def collect(api=None):
             "closed_trades": None, "wins": None, "losses": None,
             "realized_profit_eur": None, "profit_factor": None,
         },
+        "current_experiment": {
+            "account_id": DB.name.removesuffix(".sqlite"), "database": DB.name,
+            "policy_id": account_policy_id(), "strategy": os.environ.get("ACTIVE_STRATEGY", "unknown")[:80],
+            "first_open_date": None, "last_close_date": None, "closed_trades": None,
+            "wins": None, "losses": None, "realized_profit_eur": None,
+            "profit_factor": None, "fees_paid_eur": None,
+            "max_drawdown_pct": None, "recent_profits": [],
+        },
     }
     if not data["database_found"]:
         data["alerts"].append("Base Freqtrade absente : statistiques indisponibles.")
@@ -224,6 +374,7 @@ def collect(api=None):
                 data["last_trades"] = [dict(zip(["pair", "close_profit", "close_profit_abs", "close_date", "exit_reason"], row)) for row in rows]
                 for trade in data["last_trades"]:
                     trade["close_profit_pct"] = round(number(trade["close_profit"]) * 100, 2)
+                data["current_experiment"].update(trade_stats(conn, initial))
                 data["database_ok"] = True
             finally:
                 conn.close()
@@ -289,6 +440,7 @@ def collect(api=None):
     data["healthy"] = data["api_ok"] and data["database_ok"] and data["configuration_safe"] and not data["alerts"]
     if data["api_ok"] and data["database_ok"] and data["total_trades"] == 0 and data["state"] == "active":
         data["activity_note"] = "Bot actif, en attente d'un signal d'entrée conforme à la stratégie."
+    data['accounts'] = extra_accounts()
     data['market_room'] = build_room(data, REPORTS, now)
     execution = data['market_room'].get('simulation_execution')
     if execution:
@@ -315,6 +467,15 @@ def render(data):
     lines = ["# Rapport Freqtrade", "", f"- Généré : {data['generated_at']}", f"- Observation moteur : {data.get('observed_at') or 'non vérifiée'}", f"- Validité : {data.get('max_age_seconds', 900)} secondes ; au-delà, état inconnu.", f"- Mode vérifié : **{data['mode']}**", f"- État : **{data['state']}**", f"- Stratégie : **{data['strategy']}** ({data['strategy_validation_state']})"]
     for label, key in [("Trades ouverts", "open_trades"), ("Trades clôturés", "closed_trades"), ("Valeur simulée EUR", "equity_eur"), ("P/L réalisé EUR", "realized_profit_eur"), ("P/L latent net estimé EUR", "unrealized_profit_eur"), ("P/L total EUR", "total_profit_eur"), ("Rendement sur portefeuille initial %", "total_return_pct"), ("Capital engagé EUR", "committed_capital_eur"), ("Risque théorique au stop, hors frais/glissement EUR", "estimated_stop_risk_eur"), ("Baisse maximale observée depuis suivi %", "observed_max_drawdown_pct")]:
         lines.append("- " + label + " : " + display(data.get(key)))
+    current = data.get("current_experiment", {})
+    lines += ["", "## Expérience courante", "- Compte : " + str(current.get("account_id") or "inconnu") + " (" + str(current.get("database") or "?") + ")",
+              "- Politique : " + str(current.get("policy_id") or "aucune"),
+              "- Premier trade ouvert : " + display(current.get("first_open_date")) + " ; dernière clôture : " + display(current.get("last_close_date")),
+              "- Profit factor : " + display(current.get("profit_factor")) + " ; frais estimés EUR : " + display(current.get("fees_paid_eur")),
+              "- Baisse maximale réalisée % : " + display(current.get("max_drawdown_pct")),
+              "- Derniers profits EUR : " + (", ".join(display(r.get("profit_eur")) for r in current.get("recent_profits") or []) or "aucun")]
+    for account in data.get("accounts", []):
+        lines.append("- Compte supplémentaire " + str(account.get("account_id")) + " : " + display(account.get("closed_trades")) + " clôtures, P/L réalisé EUR " + display(account.get("realized_profit_eur")) + ", PF " + display(account.get("profit_factor")) + ", baisse max % " + display(account.get("max_drawdown_pct")))
     v2 = data.get("v2", {})
     lines += ["", "## Performance prospective V2 uniquement",
               "- Frontière : " + str(v2.get("deployed_at", "inconnue")),

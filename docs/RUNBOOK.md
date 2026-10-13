@@ -71,6 +71,20 @@ précédent est restauré. Le volume `ai-trading-freqtrade-runtime` est conserv�
 La production Jarvis suit son mécanisme signé existant, jamais une copie libre
 de code. Ne jamais réinitialiser la base pour embellir les résultats.
 
+### ⚠️ Ne jamais lancer `docker compose down -v` sur le projet principal
+
+Le `docker-compose.yml` principal déclare le volume
+`ai-trading-freqtrade-control-runtime` **sans** `external: true` (pour que `up`
+n'échoue pas si le compte témoin n'a pas encore démarré). Compose le considère
+donc comme appartenant au projet principal : `docker compose down -v` (ou
+`--volumes`) **supprimerait ce volume, donc la base dry-run du compte témoin**
+(`trades-control-stops-20261013.dryrun.sqlite`), de façon irréversible.
+
+- Pour arrêter : `docker compose down` **sans `-v`** (les volumes sont conservés).
+- Ne pas non plus lancer `docker volume prune` / `docker system prune --volumes`.
+- Le volume `ai-trading-freqtrade-runtime` (external) n'est pas supprimé par
+  `down -v`, mais la règle reste : jamais `-v` sur ce projet.
+
 Toute future expérimentation est régie par `docs/RESEARCH_PROTOCOL.md`.
 La reprise explicite après changement de code est décrite dans
 [`RESEARCH_RESUME.md`](RESEARCH_RESUME.md). Elle conserve les preuves et réserve
