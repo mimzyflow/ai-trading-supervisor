@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "validation-criteria-20261013",
+  "scope": "SIMULATION_ONLY",
+  "real_money_eligible": false,
+  "fixed_before_observation": "2026-10-13",
+  "promotion": {
+    "min_closed_trades": 30,
+    "min_observation_days": 30,
+    "min_profit_factor": 1.2,
+    "max_drawdown_pct": 5.0,
+    "min_net_return_pct": 0.0,
+    "min_win_rate_pct": null,
+    "max_fees_share_of_gross_profit_pct": 50.0
+  },
+  "stop": {
+    "max_drawdown_pct": 5.0,
+    "max_consecutive_losses": 10,
+    "min_profit_factor_after_trades": {"trades": 20, "profit_factor": 0.8}
+  }
+}
