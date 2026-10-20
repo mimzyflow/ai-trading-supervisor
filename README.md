@@ -10,7 +10,10 @@ Rapport local/Jarvis toutes les 5 minutes, archives horaires, expiration après
 15 minutes. API/base invalides => données indisponibles, jamais faux zéro.
 
 La simulation utilise des données publiques, sans clé Kraken autorisant les
-ordres. Frais nouveaux trades : 0,80 % par côté. Les secrets UI restent dans
+ordres. Frais : scénarios paramétrables dans `research_lab/cost_model.py`
+(maker ~0,25 % + glissement 0,10 % par côté par défaut pour la recherche ;
+l'ancien 0,80 % par côté reste le scénario dégradé `legacy_degraded`, et le
+moteur Oracle reste configuré à 0,80 % tant que Moussa ne décide pas autrement). Les secrets UI restent dans
 `.env` hors Git. La publication GitHub nécessite un jeton dédié limité aux
 issues de ce dépôt ; son absence est un état explicite `not_configured`.
 
@@ -32,8 +35,12 @@ expériences. Les résultats simulés ne garantissent pas les résultats réels.
 `research_lab` est un moteur séparé de Freqtrade, uniquement recherche/simulation.
 Il explore quatre variantes figées, réserve un contrôle futur de 126 séances
 et conserve les décisions dans SQLite. Il ne réécrit pas son code ni ses limites.
-Un garde surveille la simulation existante toutes les cinq minutes et peut arrêter
-uniquement le conteneur confirmé DRY-RUN à 5 % de baisse du portefeuille.
+Un garde surveille la simulation existante toutes les cinq minutes. Le seuil de
+5 % (configurable) est une **alerte seule** (`notify_only`) : aucun arrêt ni
+liquidation forcés. Le portefeuille papier actions enregistre un état halt
+persistant (`risk_halt_preserved`) sans vendre les positions ; la liquidation
+historique n'existe plus que sur demande explicite (`halt_action='liquidate'`).
+Seul le compte témoin `MoussaControlStops` garde des stops, par conception.
 
 Le simulateur actions/ETF modélise ouverture suivante, coûts, quantités entières,
 splits et dividendes non encaissés. Un adaptateur Alpaca **papier uniquement** est
@@ -71,3 +78,9 @@ indépendante. Les résultats bruts et détaillés restent hors Git.
 Premier essai du 4 octobre : **aucune variante retenue**, source unique et
 transactions trop rares. Voir [le protocole](docs/EQUITY_SIMULATIONS.md) et
 [les 72 résultats](docs/EQUITY_SIMULATION_RESULTS_2026-10-04.md).
+
+## Coûts réalistes, tendance quotidienne et contrôles de biais (21/10/2026)
+
+Voir [docs/REALISTIC_COSTS_DAILY_TREND_2026-10-21.md](docs/REALISTIC_COSTS_DAILY_TREND_2026-10-21.md) :
+modèle de frais, stratégie `MoussaDailyTrend` (BTC/ETH, bougies 1d), filtres V3
+(coûts stressés, leave-one-pair-out, concentration) et `scripts/run_bias_checks.py`.

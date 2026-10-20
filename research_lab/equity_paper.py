@@ -117,9 +117,19 @@ def _corporate_action_block(assets, state, dates, now):
                 return 'corporate_action_requires_review'
     return None
 
+# Règle MoussaMarketRoom : le seuil de 5 % est une alerte. Par défaut, un
+# franchissement enregistre un état halt persistant (risk_halt_preserved) sans
+# liquidation forcée ni blocage des sorties normales. La liquidation historique
+# reste disponible uniquement sur demande explicite (halt_action='liquidate').
+HALT_ACTIONS = ('alert_only', 'liquidate')
+DEFAULT_HALT_ACTION = 'alert_only'
+
+
 def advance(bundle,state,spec,fee=.001,min_commission=1,slippage=.001,allocation=10,reserve_ratio=.10,max_drawdown=.05,now=None,risk_model=False,
-            loss_stops=True, advisory=None, execution_revision=EXECUTION_REVISION):
+            loss_stops=True, advisory=None, execution_revision=EXECUTION_REVISION, halt_action=DEFAULT_HALT_ACTION):
     check_spec(spec); now=now or datetime.now(timezone.utc)
+    if halt_action not in HALT_ACTIONS:
+        raise ValueError('invalid_halt_action')
     max_drawdown = finite(max_drawdown, 0.00000001) if max_drawdown is not None else None
     if max_drawdown is not None and max_drawdown > .05:
         raise ValueError('invalid_paper_drawdown_limit')
@@ -139,6 +149,9 @@ def advance(bundle,state,spec,fee=.001,min_commission=1,slippage=.001,allocation
     state['blocked_reason'] = blocked
     state['halted'] = bool(state.get('halted'))
     state.setdefault('halt_reason', None)
+    if state['halted']:
+        # risk_halt_preserved: a recorded halt survives restarts and recoveries.
+        state['risk_halt_preserved'] = True
     # A historical breach remains a breach even if the legacy portfolio recovered.
     if max_drawdown is not None and state['max_drawdown_pct'] >= max_drawdown * 100:
         state['halted'] = True
@@ -173,8 +186,17 @@ def advance(bundle,state,spec,fee=.001,min_commission=1,slippage=.001,allocation
             'quantity': position['quantity'], 'profit': proceeds - position['cost'], 'reason': reason})
 
     def halt_and_liquidate(index, session, field):
+        first = not state['halted']
         state['halted'] = True
         state['halt_reason'] = state['halt_reason'] or 'portfolio_drawdown'
+        state['halt_action'] = halt_action
+        if halt_action == 'alert_only':
+            # Preserve the halt record; never sell positions because of it.
+            state['risk_halt_preserved'] = True
+            if first:
+                state.setdefault('risk_alerts', []).append({'session': session, 'field': field,
+                    'max_drawdown_pct': round(state['max_drawdown_pct'], 4), 'action': 'notify_only'})
+            return
         for symbol in list(state['positions']):
             asset = by_id[symbol]
             sell(asset, session, asset['bars'][index][field], 'risk_halt_' + field)
@@ -227,9 +249,10 @@ def advance(bundle,state,spec,fee=.001,min_commission=1,slippage=.001,allocation
                 p['highest_price'] = max(previous_high, bar['high'])
         equity_before = marked_equity(i, 'close')
         record_drawdown(equity_before)
-        if state['halted'] or breached(equity_before):
+        halt_now = state['halted'] or breached(equity_before)
+        if halt_now:
             halt_and_liquidate(i, session, 'close')
-        else:
+        if not halt_now or halt_action == 'alert_only':
             for a in assets:
                 if a['id'] in state['positions'] or not _entry(a,i,spec) or (ai and not ai.get('allow_entry')): continue
                 bar=a['bars'][i]; price=bar['close']*(1+slippage)
@@ -249,9 +272,11 @@ def advance(bundle,state,spec,fee=.001,min_commission=1,slippage=.001,allocation
                 # Stop this session's remaining entries as soon as fill costs breach risk.
                 equity_after_entry = marked_equity(i, 'close')
                 record_drawdown(equity_after_entry)
-                if breached(equity_after_entry):
+                if breached(equity_after_entry) and halt_action == 'liquidate':
                     halt_and_liquidate(i, session, 'close')
                     break
+                if breached(equity_after_entry):
+                    halt_and_liquidate(i, session, 'close')
         state['equity'] = marked_equity(i, 'close')
         record_drawdown(state['equity'])
         state['last_session'] = session
@@ -271,6 +296,7 @@ def summary(state):
             'expectancy':round(sum(t['profit'] for t in closed)/len(closed),4) if closed else None,
             'max_drawdown_pct':round(state['max_drawdown_pct'],4),
             'halted':bool(state.get('halted')), 'halt_reason':state.get('halt_reason'),
+            'halt_action':state.get('halt_action'), 'risk_halt_preserved':bool(state.get('risk_halt_preserved')),
             'blocked_reason':state.get('blocked_reason'),
             'paper_engine_version':state.get('paper_engine_version',1),
             'execution_revision':state.get('execution_revision','legacy'),

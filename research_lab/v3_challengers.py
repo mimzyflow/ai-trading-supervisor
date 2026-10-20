@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from .data import subset
 from .engine import simulate
 from .research import costs
+from .cost_model import scenario as cost_scenario
 from .robustness import (
     curve_returns,
     probability_of_backtest_overfitting,
@@ -49,6 +50,38 @@ def _positive_concentration(trades):
             by_asset[trade["asset"]] = by_asset.get(trade["asset"], 0.0) + profit
     total = sum(by_asset.values())
     return max(by_asset.values()) / total if total and by_asset else 0.0
+MAX_POSITIVE_PNL_ASSET_SHARE = 0.65
+MAX_NET_PNL_ASSET_SHARE = 0.50
+
+
+def _net_concentration(trades):
+    """Share of net profit explained by the best asset (0 when total <= 0)."""
+    by_asset = {}
+    for trade in trades:
+        by_asset[trade["asset"]] = by_asset.get(trade["asset"], 0.0) + float(trade.get("profit", 0))
+    total = sum(by_asset.values())
+    if total <= 0 or not by_asset:
+        return 0.0
+    return max(0.0, max(by_asset.values())) / total
+
+
+def _without_asset(bundle, asset_id):
+    return {**bundle, "assets": [a for a in bundle["assets"] if a["id"] != asset_id]}
+
+
+def leave_one_pair_out(bundle, spec, start_index, cost_kwargs):
+    """Re-run the frozen spec once per removed asset; never retunes parameters."""
+    if len(bundle["assets"]) < 2:
+        return {"state": "not_applicable_single_asset", "runs": {}}
+    runs = {}
+    for asset in bundle["assets"]:
+        result = simulate(_without_asset(bundle, asset["id"]), spec, start_index=start_index, **cost_kwargs)
+        runs[asset["id"]] = {"return_pct": result["return_pct"], "closed_trades": result["closed_trades"]}
+    worst = min(runs.values(), key=lambda item: item["return_pct"])
+    return {"state": "computed", "runs": runs, "worst_return_pct": worst["return_pct"],
+            "all_positive": all(item["return_pct"] > 0 for item in runs.values())}
+
+
 def _window_ranges(count):
     start = max(200, count // 3)
     available = count - start
@@ -107,14 +140,28 @@ def evaluate(bundle, now=None):
         concentration = _positive_concentration(result["trades"])
         if unstable:
             gate["reasons"].append("negative_independent_window")
-        if concentration > 0.65:
+        if concentration > MAX_POSITIVE_PNL_ASSET_SHARE:
             gate["reasons"].append("positive_pnl_concentration")
+        net_concentration = _net_concentration(result["trades"])
+        if net_concentration > MAX_NET_PNL_ASSET_SHARE:
+            gate["reasons"].append("net_pnl_concentration")
+        stressed = simulate(bundle, CHALLENGERS[name], start_index=ranges[0][0], **costs(bundle, stressed=True))
+        legacy = simulate(bundle, CHALLENGERS[name], start_index=ranges[0][0], **cost_scenario("legacy_degraded"))
+        if stressed["return_pct"] <= 0:
+            gate["reasons"].append("stressed_costs_not_positive")
+        lopo = leave_one_pair_out(bundle, CHALLENGERS[name], ranges[0][0], costs(bundle))
+        if lopo["state"] == "computed" and not lopo["all_positive"]:
+            gate["reasons"].append("leave_one_pair_out_not_positive")
         gate["state"] = "research_promising" if not gate["reasons"] else "rejected"
         full[name] = {
             "spec": CHALLENGERS[name],
             "result": _compact(result),
             "gate": gate,
             "positive_pnl_top_asset_share": round(concentration, 6),
+            "net_pnl_top_asset_share": round(net_concentration, 6),
+            "stressed_costs": _compact(stressed),
+            "legacy_degraded_costs": _compact(legacy),
+            "leave_one_pair_out": lopo,
             "windows": window_details[name],
         }
     promising = [name for name, value in full.items() if value["gate"]["state"] == "research_promising"]
@@ -132,7 +179,10 @@ def evaluate(bundle, now=None):
             "maximum_drawdown_pct": 5,
             "minimum_deflated_sharpe_probability": 0.90,
             "maximum_pbo": 0.50,
-            "maximum_positive_pnl_asset_share": 0.65,
+            "maximum_positive_pnl_asset_share": MAX_POSITIVE_PNL_ASSET_SHARE,
+            "maximum_net_pnl_asset_share": MAX_NET_PNL_ASSET_SHARE,
+            "stressed_costs_must_be_positive": True,
+            "leave_one_pair_out_must_stay_positive": True,
             "negative_independent_window_allowed": False,
         },
         "automatic_live_deployment": False,

@@ -72,7 +72,7 @@ class EquityPaperTests(unittest.TestCase):
         b['assets'][0]['bars'][-1].update(open=9.5, high=12, low=9.4, close=12)
         s = self.seeded_position(b, 3, quantity=10)
         now = datetime.fromisoformat(b['assets'][0]['bars'][-1]['close_at'])
-        advance(b, s, self.spec, now=now)
+        advance(b, s, self.spec, now=now, halt_action='liquidate')
         self.assertTrue(s['halted'])
         self.assertEqual(s['positions'], {})
         self.assertEqual(s['trades'][0]['reason'], 'risk_halt_open')
@@ -87,7 +87,7 @@ class EquityPaperTests(unittest.TestCase):
             for i, bar in enumerate(next_bundle['assets'][0]['bars']):
                 price = 5 + i * .1
                 bar.update(open=price, high=price, low=price, close=price)
-            self.run_paper(next_bundle, restored)
+            self.run_paper(next_bundle, restored, halt_action='liquidate')
             self.assertEqual(restored['positions'], {})
             self.assertEqual(restored['trades'], s['trades'])
             self.assertEqual(restored['cash'], s['cash'])
@@ -97,7 +97,7 @@ class EquityPaperTests(unittest.TestCase):
         b = self.small_bundle(count=5)
         b['assets'][0]['bars'][-1].update(open=10, high=10, low=9.3, close=9.4)
         s = self.seeded_position(b, 3, quantity=10)
-        self.run_paper(b, s, spec={**self.spec, 'stop_loss':.10})
+        self.run_paper(b, s, spec={**self.spec, 'stop_loss':.10}, halt_action='liquidate')
         self.assertTrue(s['halted'])
         self.assertEqual(s['positions'], {})
         self.assertEqual(s['trades'][0]['reason'], 'risk_halt_close')
@@ -149,7 +149,7 @@ class EquityPaperTests(unittest.TestCase):
         b = self.small_bundle(count=5)
         s = self.seeded_position(b, 3)
         s['max_drawdown_pct'] = 6
-        self.run_paper(b, s)
+        self.run_paper(b, s, halt_action='liquidate')
         self.assertTrue(s['halted'])
         self.assertEqual(s['trades'][0]['reason'], 'risk_halt_open')
         self.assertEqual(s['max_drawdown_pct'], 6)
@@ -163,7 +163,7 @@ class EquityPaperTests(unittest.TestCase):
         b['assets'] = [{**deepcopy(b['assets'][0]), 'id':'TEST' + str(i)} for i in range(8)]
         s = new_state(last_session=b['assets'][0]['bars'][3]['close_at'])
         now = datetime.fromisoformat(b['assets'][0]['bars'][-1]['close_at'])
-        advance(b, s, self.spec, now=now, fee=0, min_commission=1, slippage=0)
+        advance(b, s, self.spec, now=now, fee=0, min_commission=1, slippage=0, halt_action='liquidate')
         self.assertTrue(s['halted'])
         self.assertEqual(s['positions'], {})
         self.assertEqual(len(s['trades']), 5)
