@@ -23,6 +23,27 @@ from .v3_challengers import CHALLENGERS, evaluate as evaluate_v3_challengers
 from .freqai_shadow import status as freqai_shadow_status
 
 
+
+# Paper-only execution for the 100 EUR market room. The former 10 EUR order with a
+# 1 USD minimum commission could not buy any share above ~10.6 USD. Orders may now use
+# the whole paper portfolio (whole shares, still capped by cash and the engine reserve),
+# with a percentage commission and a configurable minimum (0 by default for paper).
+MARKET_ROOM_PAPER_FEE = 0.001
+MARKET_ROOM_PAPER_MIN_COMMISSION = 0.0
+MARKET_ROOM_PAPER_SLIPPAGE = 0.001
+
+
+def market_room_paper_execution(funded, fee=MARKET_ROOM_PAPER_FEE,
+                                min_commission=MARKET_ROOM_PAPER_MIN_COMMISSION,
+                                slippage=MARKET_ROOM_PAPER_SLIPPAGE):
+    """Return advance_equity_paper sizing kwargs. Never changes budget or initial cash."""
+    if not 0 <= fee <= 0.02 or not 0 <= slippage <= 0.02 or not 0 <= min_commission <= 5:
+        raise ValueError('invalid_market_room_paper_costs')
+    allocation = float(funded.get('initial_cash') or 0)
+    if allocation <= 0:
+        raise ValueError('invalid_market_room_paper_allocation')
+    return {'allocation': allocation, 'fee': fee, 'min_commission': min_commission, 'slippage': slippage}
+
 def read_json(path, maximum=8_000_000):
     if path.stat().st_size > maximum:
         raise ValueError('state_or_data_too_large')
@@ -253,8 +274,9 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
                                       funding_fx=fx, funded_at=now.isoformat())
                     ai = advice(root / 'user_data/reports', 'ACTIONS-USD', now, policy)
                     funded = advance_equity_paper(bundle, funded, TEMPLATES[0], now=now,
-                        max_drawdown=None, loss_stops=False, allocation=10 * fx['usd_per_eur'],
-                        advisory=ai, execution_revision='market_room_no_loss_stops_v1')
+                        max_drawdown=None, loss_stops=False,
+                        advisory=ai, execution_revision='market_room_no_loss_stops_v1',
+                        **market_room_paper_execution(funded))
                     funded.update(advisory=ai, loss_limit_pct=None, position_loss_stops=False)
                     save_equity_paper(funded_file, funded)
                     current = equity_paper_summary(funded)
