@@ -19,6 +19,8 @@ from .equity_live import ERROR_CODES, error_code
 from supervisor.paper_policy import read_policy, advice
 from supervisor.market_context import market_features
 from .engine import TEMPLATES
+from . import schb_trend_paper as schb_paper
+from .schb_trend_paper import PLAN_ID as SCHB_PLAN_ID
 from .v3_challengers import CHALLENGERS, evaluate as evaluate_v3_challengers
 from .freqai_shadow import status as freqai_shadow_status
 
@@ -43,6 +45,29 @@ def market_room_paper_execution(funded, fee=MARKET_ROOM_PAPER_FEE,
     if allocation <= 0:
         raise ValueError('invalid_market_room_paper_allocation')
     return {'allocation': allocation, 'fee': fee, 'min_commission': min_commission, 'slippage': slippage}
+
+def advance_market_room_schb(state, now, policy, fx, root):
+    """Avance le compte papier 100 EUR sur SCHB. Aucun ordre réel, aucun courtier."""
+    bundle = schb_paper.validate_bundle(read_json(state / 'schb.bundle.json'), now)
+    plan_file = state / ('equity_' + policy['id'] + '_' + SCHB_PLAN_ID + '.json')
+    funded = schb_paper.load(plan_file)
+    if funded is None:
+        legacy = schb_paper.legacy_snapshot(state / ('equity_' + policy['id'] + '.json'))
+        funded = schb_paper.new_state(now, 100 * fx['usd_per_eur'], bundle['bars'][-1]['close_at'], supersedes=legacy)
+        funded.update(policy_id=policy['id'], initial_eur=100, funding_fx=fx, funded_at=now.isoformat())
+    ai = advice(root / 'user_data/reports', 'ACTIONS-USD', now, policy)
+    funded = schb_paper.advance(funded, bundle, now)
+    funded.update(advisory=ai, loss_limit_pct=None, position_loss_stops=False)
+    schb_paper.save(plan_file, funded)
+    current = schb_paper.summary(funded)
+    current.update(initial_eur=100, equity_eur=round(funded['equity'] / fx['usd_per_eur'], 4),
+                   return_eur_pct=round((funded['equity'] / fx['usd_per_eur'] / 100 - 1) * 100, 4),
+                   funding_usd=round(funded['initial_cash'], 4), funding_fx_date=funded['funding_fx']['date'],
+                   fx_usd_per_eur=fx['usd_per_eur'], fx_date=fx['date'], policy_id=policy['id'],
+                   funded_at=funded['funded_at'], advisory=ai, loss_limit_pct=None, position_loss_stops=False,
+                   supersedes=funded.get('supersedes'))
+    return current
+
 
 def read_json(path, maximum=8_000_000):
     if path.stat().st_size > maximum:
@@ -263,30 +288,18 @@ def once(root, stop=True, now=None, collector=fetch_crypto_broad):
                 status['equities'] = {**equity_marker['result'], 'paper': equity_paper_summary(paper),
                                       'v3_shadow': shadows, 'broker_orders_activated': False}
                 if policy:
+                    # Plan papier versionné market_room_schb_slow_trend_v1 (SCHB seul, SMA200
+                    # mensuelle). L'ancien fichier equity_<policy>.json (liste SOFI...) n'est
+                    # plus avancé ni modifié : il reste comme historique (gel des plans).
                     fx = collect_fx(state / 'eur-usd.json', now)
-                    funded_file = state / ('equity_' + policy['id'] + '.json')
-                    if funded_file.exists():
-                        funded = load_equity_paper(funded_file, now)
-                    else:
-                        funded = new_state(now, initial=100 * fx['usd_per_eur'],
-                                           last_session=bundle['assets'][0]['bars'][-1]['close_at'])
-                        funded.update(policy_id=policy['id'], initial_eur=100,
-                                      funding_fx=fx, funded_at=now.isoformat())
-                    ai = advice(root / 'user_data/reports', 'ACTIONS-USD', now, policy)
-                    funded = advance_equity_paper(bundle, funded, TEMPLATES[0], now=now,
-                        max_drawdown=None, loss_stops=False,
-                        advisory=ai, execution_revision='market_room_no_loss_stops_v1',
-                        **market_room_paper_execution(funded))
-                    funded.update(advisory=ai, loss_limit_pct=None, position_loss_stops=False)
-                    save_equity_paper(funded_file, funded)
-                    current = equity_paper_summary(funded)
-                    current.update(initial_eur=100, equity_eur=round(funded['equity']/fx['usd_per_eur'],4),
-                                   return_eur_pct=round((funded['equity']/fx['usd_per_eur']/100-1)*100,4),
-                                   funding_usd=round(funded['initial_cash'],4), funding_fx_date=funded['funding_fx']['date'],
-                                   fx_usd_per_eur=fx['usd_per_eur'], fx_date=fx['date'],
-                                   policy_id=policy['id'], funded_at=funded['funded_at'], advisory=ai,
-                                   loss_limit_pct=None, position_loss_stops=False)
-                    status['equities'].update(control=status['equities']['paper'], paper=current)
+                    try:
+                        current = advance_market_room_schb(state, now, policy, fx, root)
+                        status['equities'].update(control=status['equities']['paper'], paper=current)
+                    except Exception as exc:
+                        status['equities'].update(control=status['equities']['paper'],
+                                                  paper={'state': 'schb_data_unavailable', 'plan_id': SCHB_PLAN_ID,
+                                                         'error_type': type(exc).__name__, 'real_money_eligible': False})
+                        status['errors'].append('schb_paper_' + type(exc).__name__)
             except Exception as exc:
                 status['equities'] = {'state': 'invalid_broker_data', 'error_type': type(exc).__name__, 'broker_orders_activated': False}
                 code = error_code(exc)
