@@ -21,6 +21,7 @@ from pathlib import Path
 IMAGE = "freqtradeorg/freqtrade:2026.9"
 ALLOWED = {
     "MoussaDailyTrend": ("1d", "user_data/config.daily-trend.research.json", ("BTC/EUR", "ETH/EUR")),
+    "MoussaMonthlyRotation": ("1d", "user_data/config.monthly-rotation.research.json", ("BTC/EUR", "ETH/EUR")),
     "MoussaV3RegimeMomentum": ("1h", "user_data/config.dryrun.json", ("ETH/EUR",)),
     "MoussaV3TripleBarrier": ("1h", "user_data/config.dryrun.json", ("ETH/EUR",)),
     "MoussaV3SlowBreakout": ("4h", "user_data/config.dryrun.json", ("ETH/EUR",)),
