@@ -1,5 +1,16 @@
 # AI Trading Supervisor
 
+> **Status as of 2026-11-07: PAUSED / research-only.** Oracle execution
+> (two Freqtrade paper bots, supervisor, research timer and TradingAgents room)
+> was stopped after repeated simulated losses. This repository preserves the
+> research code for reproducibility and independent review. **No strategy has
+> passed validation for live trading. No real-money execution is authorized.**
+>
+> Voir [le bilan du 7 novembre 2026](docs/PROJECT_STATUS_2026-11-07.md)
+> et [les consignes de contribution](CONTRIBUTING.md).
+> Historical deployment instructions below describe the former setup,
+> **not an active service or a recommendation to deploy it**.
+
 Laboratoire personnel de trading Kraken spot EUR, en simulation uniquement.
 Portefeuille 100 EUR, deux positions de 20 EUR maximum. Aucune stratégie de ce
 dépôt n'est validée pour le réel.
